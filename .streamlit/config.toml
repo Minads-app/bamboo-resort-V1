@@ -8,4 +8,6 @@ font = "sans serif"
 
 # Cấu hình server
 [server]
-headless = false  # false = tự động mở trình duyệt khi chạy app
+headless = true
+enableCORS = false
+enableXsrfProtection = false
