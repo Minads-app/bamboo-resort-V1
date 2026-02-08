@@ -8,14 +8,26 @@ import uuid
 
 
 # --- 1. KẾT NỐI FIRESTORE (Singleton) ---
+# --- 1. KẾT NỐI FIRESTORE (Singleton) ---
 if not firebase_admin._apps:
     try:
-        # Kiểm tra file key
+        # Ưu tiên 1: File key (Local dev)
         if os.path.exists("firebase_key.json"):
             cred = credentials.Certificate("firebase_key.json")
             firebase_admin.initialize_app(cred)
+        # Ưu tiên 2: Streamlit Secrets (Cloud deployment)
+        elif "firebase" in st.secrets:
+            # Convert st.secrets to a standard dict to avoid issues
+            key_dict = dict(st.secrets["firebase"])
+            
+            # Handle private_key newlines if they are escaped incorrectly
+            if "private_key" in key_dict:
+                key_dict["private_key"] = key_dict["private_key"].replace("\\n", "\n")
+                
+            cred = credentials.Certificate(key_dict)
+            firebase_admin.initialize_app(cred)
         else:
-            st.error("⚠️ Lỗi: Không tìm thấy file 'firebase_key.json'.")
+            st.error("⚠️ Lỗi: Không tìm thấy 'firebase_key.json' hoặc cấu hình secrets 'firebase'.")
     except Exception as e:
         st.error(f"Lỗi khởi tạo Firebase: {e}")
 
