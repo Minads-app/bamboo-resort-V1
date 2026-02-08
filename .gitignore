@@ -1,0 +1,7 @@
+# .gitignore
+__pycache__/
+*.pyc
+.DS_Store
+.env
+firebase_key.json
+.streamlit/secrets.toml

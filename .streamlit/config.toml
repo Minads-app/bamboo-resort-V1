@@ -1,0 +1,11 @@
+[theme]
+# Màu nền chính của sidebar (có thể dùng hex hoặc tên màu)
+primaryColor = "#0068c9"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
+font = "sans serif"
+
+# Cấu hình server
+[server]
+headless = false  # false = tự động mở trình duyệt khi chạy app
