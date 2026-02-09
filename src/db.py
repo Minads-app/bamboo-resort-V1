@@ -158,10 +158,10 @@ def get_booking_by_id(booking_id: str):
         return doc.to_dict()
     return None
 
-def process_checkout(booking_id: str, room_id: str, final_amount: float, payment_method: str, note: str):
+def process_checkout(booking_id: str, room_id: str, final_amount: float, payment_method: str, note: str, service_fee: float = 0.0):
     """
     Xử lý trả phòng:
-    1. Update Booking: status='Completed', set actual_check_out, final_amount
+    1. Update Booking: status='Completed', set actual_check_out, final_amount, service_fee
     2. Update Room: status='Chưa dọn' (DIRTY) - cần dọn mới bán được tiếp
     """
     db = get_db()
@@ -171,6 +171,7 @@ def process_checkout(booking_id: str, room_id: str, final_amount: float, payment
             "status": "Completed",
             "check_out_actual": datetime.now(),
             "total_amount": final_amount,
+            "service_fee": service_fee,
             "payment_method": payment_method,
             "note": note
         })

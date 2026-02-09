@@ -95,6 +95,7 @@ class Booking(BaseModel):
     # Các trường cập nhật khi Check-out
     check_out_actual: Optional[datetime] = None
     total_amount: float = 0.0
+    service_fee: float = 0.0  # Phụ thu / Dịch vụ
     payment_method: str = ""
 
     # --- Trường phục vụ đặt phòng online ---

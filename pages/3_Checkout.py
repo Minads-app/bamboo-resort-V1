@@ -328,7 +328,7 @@ with col_bill:
         submitted = st.form_submit_button("💰 XÁC NHẬN THANH TOÁN & TRẢ PHÒNG", type="primary", use_container_width=True)
         
         if submitted:
-            success, msg = process_checkout(booking_id, selected_room_id, total_gross, payment_method, note)
+            success, msg = process_checkout(booking_id, selected_room_id, total_gross, payment_method, note, service_fee=float(service_fee))
             if success:
                 # Lưu dữ liệu hóa đơn để hiện màn hình bill
                 st.session_state["checkout_success_data"] = {
