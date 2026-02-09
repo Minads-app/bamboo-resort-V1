@@ -109,3 +109,21 @@ class Booking(BaseModel):
     def to_dict(self):
         try: return self.model_dump()
         except AttributeError: return self.dict()
+
+# --- 4. CẤU HÌNH HỆ THỐNG (SYSTEM CONFIG) ---
+
+class SystemConfig(BaseModel):
+    hotel_name: str = "The Bamboo Resort"
+    address: str = ""
+    phone: str = ""
+    email: str = ""
+    website: str = ""
+    business_type: str = "Resort" # Homestay, Khách sạn, Resort...
+    
+    # Các cấu hình khác (nếu cần sync với model)
+    holidays: List[str] = Field(default_factory=list)
+    holiday_notes: Dict[str, str] = Field(default_factory=dict)
+    
+    def to_dict(self):
+        try: return self.model_dump()
+        except AttributeError: return self.dict()

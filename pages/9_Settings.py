@@ -675,6 +675,57 @@ with tab_rooms:
 
 # --- TAB 3: HỆ THỐNG & TÀI KHOẢN THANH TOÁN ---
 with tab_system:
+    # 1. CẤU HÌNH THÔNG TIN ĐƠN VỊ
+    st.subheader("🏢 Thông tin đơn vị")
+    st.caption("Thông tin này sẽ hiển thị trên Header của trang Booking và trong các mẫu in ấn.")
+    
+    # Load config with specific key
+    sys_conf = get_system_config("general_info") or {}
+    
+    with st.form("frm_sys_info"):
+        c1, c2 = st.columns(2)
+        hotel_name = c1.text_input("Tên đơn vị (Khách sạn/Resort)", value=sys_conf.get("hotel_name", "The Bamboo Resort"))
+        biz_type = c2.selectbox(
+            "Loại hình kinh doanh",
+            options=["Resort", "Khách sạn", "Homestay", "Villa", "Nhà nghỉ", "Căn hộ dịch vụ"],
+            index=["Resort", "Khách sạn", "Homestay", "Villa", "Nhà nghỉ", "Căn hộ dịch vụ"].index(sys_conf.get("business_type", "Resort")) if sys_conf.get("business_type") in ["Resort", "Khách sạn", "Homestay", "Villa", "Nhà nghỉ", "Căn hộ dịch vụ"] else 0
+        )
+        
+        addr = st.text_input("Địa chỉ", value=sys_conf.get("address", ""))
+        
+        c3, c4, c5 = st.columns(3)
+        phone = c3.text_input("Điện thoại", value=sys_conf.get("phone", ""))
+        email = c4.text_input("Email", value=sys_conf.get("email", ""))
+        website = c5.text_input("Website", value=sys_conf.get("website", ""))
+        
+        if st.form_submit_button("💾 Lưu thông tin đơn vị", type="primary"):
+            new_conf = {
+                "hotel_name": hotel_name,
+                "business_type": biz_type,
+                "address": addr,
+                "phone": phone,
+                "email": email,
+                "website": website,
+                # Giữ lại các field cũ nếu có (tránh ghi đè mất data holiday)
+                "holidays": sys_conf.get("holidays", []),
+                "holiday_notes": sys_conf.get("holiday_notes", {}),
+                "weekend_weekdays": sys_conf.get("weekend_weekdays", [5, 6])
+            }
+            save_system_config(content=new_conf) # Hàm save_system_config mặc định lưu vào 'system' collection nếu ko chỉ định key? 
+            # Kiểm tra lại hàm save_system_config trong db.py: def save_system_config(key="system", content={}): 
+            # À, file db.py có vẻ dùng key="system" mặc định hoặc phải truyền.
+            # Trong code cũ: save_system_config("special_days", cfg).
+            # Vậy ở đây ta nên lưu vào key="general_info" hoặc update vào "system" chung?
+            # Để đơn giản và tránh conflict với special_days, ta lưu vào "general_info".
+            # Tuy nhiên, model SystemConfig đang gom hết. 
+            # Tốt nhất là lưu vào key "general_info"
+            save_system_config("general_info", new_conf)
+            st.toast("Đã lưu thông tin đơn vị!", icon="🏢")
+            st.rerun()
+
+    st.divider()
+
+    # 2. TÀI KHOẢN THANH TOÁN
     st.subheader("💳 Tài khoản thanh toán (Ngân hàng)")
     st.caption(
         "Khai báo thông tin tài khoản để in trên Bill và hiển thị QR khi khách thanh toán online."

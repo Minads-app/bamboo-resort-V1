@@ -216,8 +216,6 @@ with col_stats:
                     f"- Phòng **{r['id']}** – {bk.get('customer_name','')} ({bk.get('customer_phone','')})"
                 )
 
-st.markdown("---")
-
 # --- 3. VẼ SƠ ĐỒ PHÒNG (GRID) ---
 if rooms:
     # Custom CSS để hiển thị Card đẹp hơn
@@ -253,8 +251,12 @@ if rooms:
             # Sắp xếp theo ID
             area_rooms.sort(key=lambda x: x['id'])
             
-            # Hiển thị Header Khu vực
-            st.subheader(f"🏙️ {area} ({len(area_rooms)} phòng)")
+            # Hiển thị Header Khu vực (Compact layout)
+            st.markdown(f"""
+            <div style="border-top: 1px solid #eee; margin-top: 8px; padding-top: 8px; margin-bottom: 8px;">
+                <h5 style="margin: 0; color: #333;">{area} ({len(area_rooms)} phòng)</h5>
+            </div>
+            """, unsafe_allow_html=True)
             
             # Chia lưới: 6 phòng 1 hàng
             cols = st.columns(6)
@@ -329,7 +331,7 @@ if rooms:
                                 from src.db import update_room_status
                                 update_room_status(room['id'], RoomStatus.AVAILABLE)
                                 st.rerun()
-            st.divider()
+            # Divider removed for compact UI
 
 else:
     st.info("Chưa có dữ liệu phòng. Vui lòng vào trang Settings để tạo.")
