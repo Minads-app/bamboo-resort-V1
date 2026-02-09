@@ -79,8 +79,11 @@ def login_form(cookie_manager=None):
             if st.form_submit_button("Đăng nhập", type="primary", use_container_width=True):
                 user = authenticate_user(username, password)
                 if user:
-                    # 1. Update session state
                     st.session_state["user"] = user
+                    
+                    # Clear retry count
+                    if "auth_retry_count" in st.session_state:
+                        del st.session_state["auth_retry_count"]
                     
                     # 2. Tạo session token & lưu cookie (7 ngày)
                     token = create_user_session(username)
@@ -103,10 +106,16 @@ def require_login():
     # 0. Init Cookie Manager
     cookie_manager = get_manager()
     
+    # If we are logged in, clear retry count to keep state clean
+    if "user" in st.session_state:
+        if "auth_retry_count" in st.session_state:
+             del st.session_state["auth_retry_count"]
+    
     # 1. Check if already logged in session
     if "user" not in st.session_state:
-        # 2. Try to login via Cookie
+        # 2. Try to get cookie
         auth_token = cookie_manager.get(cookie="auth_token")
+        
         if auth_token:
             user = verify_user_session(auth_token)
             if user:
@@ -114,15 +123,19 @@ def require_login():
                 st.session_state["user"] = user
                 st.rerun() # Reload để áp dụng state
         
-        # 3. Handle "Wait for cookies" (Avoid Flicker)
-        # If we haven't tried waiting yet, and we don't have a token.
-        if "cookie_init" not in st.session_state:
-            st.session_state["cookie_init"] = True
-            # Force a rerun to allow cookie manager to sync
-            time.sleep(0.1) 
+        # 3. Retry mechanism (Fix Flicker on Cloud)
+        # Cookie manager check might be slow on Cloud (async). 
+        # We try to wait/rerun a few times before deciding user is NOT logged in.
+        if "auth_retry_count" not in st.session_state:
+            st.session_state["auth_retry_count"] = 0
+            
+        if st.session_state["auth_retry_count"] < 3:
+            st.session_state["auth_retry_count"] += 1
+            # Wait varying time to allow frontend to sync
+            time.sleep(0.3)
             st.rerun()
             
-        # 4. If we are here, it means we reran and STILL no token (or invalid).
+        # 4. Exhausted retries -> Show Login Form
         login_form(cookie_manager)
         st.stop() # Dừng render nội dung bên dưới
     
@@ -144,6 +157,7 @@ def require_login():
             cookie_manager.delete("auth_token")
             # Clear Session State
             st.session_state.pop("user")
+            st.session_state.pop("auth_retry_count", None)
             st.rerun()
 
 def apply_sidebar_style():

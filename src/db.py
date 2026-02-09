@@ -443,6 +443,17 @@ def get_completed_bookings(start_dt: datetime | None = None, end_dt: datetime | 
 
     return results
 
+def get_bookings_for_today():
+    """Lấy danh sách booking có check-in hôm nay (Tối ưu query)"""
+    db = get_db()
+    today = datetime.now().date()
+    start_dt = datetime.combine(today, datetime.min.time())
+    end_dt = datetime.combine(today, datetime.max.time())
+    
+    # Query theo khoảng thời gian check_in
+    docs = db.collection("bookings").where("check_in", ">=", start_dt).where("check_in", "<=", end_dt).stream()
+    return [doc.to_dict() for doc in docs]
+
 # --- USER MANAGEMENT & AUTH ---
 
 import hashlib

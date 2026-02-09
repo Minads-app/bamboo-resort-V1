@@ -1,7 +1,7 @@
 import streamlit as st
-from datetime import date
+from datetime import date, datetime
 from src.ui import apply_sidebar_style, create_custom_sidebar_menu
-from src.db import get_all_rooms, get_all_bookings
+from src.db import get_all_rooms, get_all_bookings, get_bookings_for_today
 from src.models import RoomStatus, BookingStatus
 
 st.set_page_config(
@@ -74,6 +74,20 @@ with col3:
 st.markdown("---")
 st.markdown("##### 📅 Khách đặt phòng hôm nay")
 
+# Fetch optimized data
+today_bookings = get_bookings_for_today()
+today_reserved = []
+
+# Filter logic can be simpler now, or trust the query.
+# However, query matches check_in date. We might want to filter by status too if needed.
+# But "Khách đặt phòng hôm nay" implies check-in is today.
+# We should filter out Cancelled?
+for b in today_bookings:
+    status = b.get("status")
+    if hasattr(status, "value"): status = status.value
+    if status != "Hủy" and status != "Cancelled":
+        today_reserved.append(b)
+
 if not today_reserved:
     st.info("Hôm nay chưa có khách đặt phòng trước.")
 else:
@@ -82,19 +96,26 @@ else:
     for b in today_reserved:
         check_in = b.get("check_in")
         check_out = b.get("check_out_expected") or b.get("check_out")
+        # Format
+        ci_str = check_in.strftime("%H:%M") if isinstance(check_in, datetime) else ""
+        co_str = check_out.strftime("%H:%M") if isinstance(check_out, datetime) else ""
+        
         rows.append(
             {
-                "Phòng": b.get("room_id", ""),
-                "Khách": b.get("customer_name", ""),
+                "Phòng": b.get("room_id", "N/A"),
+                "Khách": b.get("customer_name", "Unknown"),
                 "SĐT": b.get("customer_phone", ""),
-                "Check-in": check_in.strftime("%H:%M") if check_in else "",
-                "Check-out": check_out.strftime("%H:%M") if check_out else "",
+                "Check-in": ci_str,
+                "Check-out": co_str,
+                "Trạng thái": str(b.get("status", ""))
             }
         )
 
     try:
         import pandas as pd
         df = pd.DataFrame(rows)
+        # Reorder columns
+        df = df[["Phòng", "Khách", "SĐT", "Check-in", "Check-out", "Trạng thái"]]
         st.dataframe(df, use_container_width=True, hide_index=True)
     except Exception:
         for r in rows:
