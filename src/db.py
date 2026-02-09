@@ -448,15 +448,49 @@ def get_user(username: str):
     # Fix: Kiểm tra username rỗng hoặc chỉ chứa khoảng trắng để tránh lỗi Firestore InvalidArgument
     if not username or not username.strip():
         return None
-    
-    username = username.strip()
     db = get_db()
-    try:
-        doc = db.collection("users").document(username).get()
-        if doc.exists:
-            return doc.to_dict()
-    except Exception:
+    doc = db.collection("users").document(username).get()
+    if doc.exists:
+        return doc.to_dict()
+    return None
+
+def find_customer_by_phone(phone: str):
+    """Tìm thông tin khách hàng gần nhất theo số điện thoại"""
+    if not phone or len(phone.strip()) < 3:
         return None
+    
+    db = get_db()
+    # Tìm trong collection bookings, order by check_in desc, limit 1
+    # Lưu ý: Cần composite index nếu sort và filter cùng lúc.
+    # Để tránh lỗi index, ta có thể filter trước rồi sort in-memory nếu số lượng ít,
+    # hoặc chỉ cần lấy 1 document bất kỳ (nếu chấp nhận không phải mới nhất).
+    # Tuy nhiên, ta muốn lấy tên mới nhất.
+    # Hãy thử query simple equality trước.
+    
+    docs = db.collection("bookings").where("customer_phone", "==", phone.strip()).stream()
+    
+    # Sort in-memory to find latest
+    found_bookings = [doc.to_dict() for doc in docs]
+    if not found_bookings:
+        return None
+        
+    # Sort by created_at or check_in. Booking model has check_in.
+    def _sort_key(b):
+        ts = b.get('check_in')
+        if isinstance(ts, datetime):
+            return ts.timestamp()
+        return 0.0
+        
+    found_bookings.sort(key=_sort_key, reverse=True)
+    
+    latest = found_bookings[0]
+    return {
+        "customer_name": latest.get("customer_name"),
+        "customer_phone": latest.get("customer_phone"), # Giữ nguyên
+        "customer_type": latest.get("customer_type", "Khách lẻ")
+    }
+    
+
     return None
 
 def create_user(user_data: dict):
@@ -471,6 +505,45 @@ def delete_user(username: str):
     db = get_db()
     if username:
         db.collection("users").document(username).delete()
+
+def create_user_session(username: str) -> str:
+    """Tạo session token mới cho user và lưu vào DB"""
+    db = get_db()
+    token = str(uuid.uuid4())
+    # Lưu token vào document của user
+    db.collection("users").document(username).update({
+        "session_token": token,
+        "last_login": datetime.now()
+    })
+    return token
+
+def verify_user_session(token: str):
+    """Kiểm tra token hợp lệ và trả về user info"""
+    if not token:
+        return None
+    
+    db = get_db()
+    # Tìm user có session_token khớp
+    docs = db.collection("users").where("session_token", "==", token).limit(1).stream()
+    
+    for doc in docs:
+        user_data = doc.to_dict()
+        if user_data.get("is_active", True):
+            return user_data
+            
+    return None
+
+def delete_user_session(username: str):
+    """Xóa session token khi logout"""
+    if not username: 
+        return
+    db = get_db()
+    try:
+        db.collection("users").document(username).update({
+            "session_token": firestore.DELETE_FIELD
+        })
+    except Exception:
+        pass
 
 def authenticate_user(username, password):
     """
@@ -530,6 +603,10 @@ def add_service_order(order_data: dict):
     if not order_data.get("id"):
         order_data["id"] = str(uuid.uuid4())[:8]
     
+    # Auto add timestamp
+    if not order_data.get("created_at"):
+        order_data["created_at"] = datetime.now()
+    
     # 1. Lưu Order
     db.collection("service_orders").document(order_data["id"]).set(order_data)
     return True
@@ -544,3 +621,21 @@ def calculate_service_total(booking_id: str):
     """Tính tổng tiền dịch vụ của booking"""
     orders = get_orders_by_booking(booking_id)
     return sum(o.get("total_value", 0) for o in orders)
+
+def get_recent_service_orders(limit=50):
+    """Lấy danh sách các order gần đây nhất (In-memory sort for safety)"""
+    db = get_db()
+    docs = db.collection("service_orders").stream()
+    orders = [doc.to_dict() for doc in docs]
+    
+    # Sort desc by created_at. Handle missing field safe.
+    # Firestore datetime is timezone-aware usually, datetime.now() is usually local naive or aware depending on env.
+    # We just want relative order.
+    def _sort_key(x):
+        ts = x.get('created_at')
+        if isinstance(ts, datetime):
+            return ts.timestamp()
+        return 0.0 # Oldest
+        
+    orders.sort(key=_sort_key, reverse=True)
+    return orders[:limit]

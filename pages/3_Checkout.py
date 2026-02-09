@@ -10,6 +10,8 @@ from src.db import (
     get_all_room_types,
     update_room_status,
     get_payment_config,
+    calculate_service_total,
+    get_orders_by_booking,
 )
 from src.models import RoomStatus
 from src.logic import calculate_estimated_price, BookingType
@@ -301,6 +303,23 @@ with col_bill:
     
     room_fee = calculate_estimated_price(check_in, check_out_now, b_type_enum, pricing)
     
+    # --- TÍNH TIỀN DỊCH VỤ (New) ---
+    calc_service_fee = calculate_service_total(booking_id)
+    service_orders = get_orders_by_booking(booking_id)
+    
+    if service_orders:
+        with st.expander(f"🛒 Chi tiết dịch vụ đã gọi ({calc_service_fee:,.0f} đ)", expanded=True):
+            for o in service_orders:
+                start_time = o.get("created_at")
+                if isinstance(start_time, datetime):
+                    t_str = start_time.strftime('%H:%M %d/%m')
+                else:
+                    t_str = ""
+                st.caption(f"Order lúc {t_str}:")
+                for item in o.get("items", []):
+                    st.write(f"- {item['name']} x{item['qty']} = {item['total']:,.0f} đ")
+            st.divider()
+    
     # --- FORM HÓA ĐƠN ---
     with st.form("billing_form"):
         # 1. Tiền phòng
@@ -312,7 +331,8 @@ with col_bill:
         # 2. Phụ thu / Dịch vụ (Minibar, nước ngọt...)
         c3, c4 = st.columns([3, 1])
         c3.write("Dịch vụ / Phụ thu (Nước, Mì, Giặt ủi...):")
-        service_fee = c4.number_input("Phụ thu", value=0.0, step=5000.0, label_visibility="collapsed")
+        # Auto-fill service fee
+        service_fee = c4.number_input("Phụ thu", value=float(calc_service_fee), step=5000.0, label_visibility="collapsed")
         
         st.divider()
         

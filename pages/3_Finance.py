@@ -123,7 +123,8 @@ num_guests = len(unique_guests)
 
 # --- 3. DISPLAY METRICS (In Top Placeholder) ---
 with metrics_container:
-    m1, m2, m3, m4, m5 = st.columns(5)
+    # Chia cột theo tỷ lệ: Doanh thu rộng hơn, số lượng hẹp lại
+    m1, m2, m3, m4, m5 = st.columns([1.5, 0.8, 0.8, 1.5, 1.5])
     m1.metric("Tổng doanh thu", f"{total_rev:,.0f} đ", delta_color="off")
     m2.metric("Tổng số bill", f"{num_bills}")
     m3.metric("Tổng khách thuê", f"{num_guests}")

@@ -145,21 +145,21 @@ with col_history:
 
 # Hàm helper để lấy màu sắc và icon dựa trên trạng thái
 def get_status_style(status_str):
-    # Map string status sang màu sắc và icon
+    # Map string status sang màu sắc, icon và text hiển thị
     if status_str == RoomStatus.AVAILABLE:
-        return "🟢", "#e6fffa", "border: 2px solid #4caf50;" # Xanh lá
+        return "🟢", "#e6fffa", "border: 2px solid #4caf50;", "Trống" # Xanh lá
     elif status_str == RoomStatus.RESERVED:
-        return "🟠", "#fff3e0", "border: 2px solid #ff9800;" # Cam (Đặt trước)
+        return "🟠", "#fff3e0", "border: 2px solid #ff9800;", "Đặt trước" # Cam (Đặt trước)
     elif status_str == RoomStatus.PENDING_PAYMENT:
-        return "💸", "#e0e7ff", "border: 2px solid #3b82f6;" # Xanh dương (Chờ thanh toán)
+        return "💸", "#e0e7ff", "border: 2px solid #3b82f6;", "Chờ TT" # Xanh dương (Chờ thanh toán)
     elif status_str == RoomStatus.OCCUPIED:
-        return "🔴", "#FF7DB0", "border: 2px solid #f44336;" # Đỏ (Đang ở)
+        return "🔴", "#FF7DB0", "border: 2px solid #f44336;", "Đang ở" # Đỏ (Đang ở)
     elif status_str == RoomStatus.DIRTY:
-        return "🧹", "#fffbe6", "border: 2px solid #ffeb3b;" # Vàng (Dơ)
+        return "🧹", "#fffbe6", "border: 2px solid #ffeb3b;", "Cần dọn" # Vàng (Dơ)
     elif status_str == RoomStatus.MAINTENANCE:
-        return "🔧", "#f0f2f6", "border: 2px solid #9e9e9e;" # Xám (Bảo trì)
+        return "🔧", "#f0f2f6", "border: 2px solid #9e9e9e;", "Bảo trì" # Xám (Bảo trì)
     else:
-        return "❓", "#ffffff", "border: 2px solid #ccc;"
+        return "❓", "#ffffff", "border: 2px solid #ccc;", "Khác"
 
 # --- 2. THANH CÔNG CỤ (FILTER, SEARCH & STATS) ---
 col_filter, col_stats = st.columns([1.2, 2.8])
@@ -263,21 +263,23 @@ if rooms:
             </div>
             """, unsafe_allow_html=True)
             
-            # Chia lưới: 8 phòng 1 hàng (Compact hơn)
-            cols = st.columns(8)
+            # Chia lưới: 4 phòng 1 hàng
+            cols = st.columns(4)
             
             for i, room in enumerate(area_rooms):
-                col = cols[i % 8]
+                col = cols[i % 4]
                 with col:
                     status = room.get('status', RoomStatus.AVAILABLE)
-                    icon, bg_color, border_style = get_status_style(status)
+                    icon, bg_color, border_style, label = get_status_style(status)
                     
                     # Hiển thị Custom Card
                     st.markdown(f"""
                     <div class="room-card" style="background-color: {bg_color}; {border_style}">
                         <div class="room-id">{room['id']}</div>
                         <div class="room-type">{type_map.get(room['room_type_code'], room['room_type_code'])}</div>
-                        <div style="margin-top: 2px;">{icon}</div>
+                        <div style="margin-top: 4px; font-weight: 500; font-size: 0.9em;">
+                            {icon} <span style="margin-left: 4px;">{label}</span>
+                        </div>
                     </div>
                     """, unsafe_allow_html=True)
                     

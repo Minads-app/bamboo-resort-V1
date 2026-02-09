@@ -2,9 +2,21 @@
 UI Helper Functions - CSS và styling chung cho toàn bộ app
 """
 import streamlit as st
-from src.db import authenticate_user, get_all_users, create_user, hash_password
+from src.db import authenticate_user, get_all_users, create_user, hash_password, create_user_session, verify_user_session, delete_user_session
 from src.models import User, UserRole
 import time
+import os
+import extra_streamlit_components as stx
+from datetime import datetime, timedelta
+
+def get_manager():
+    return stx.CookieManager()
+
+def load_custom_css():
+    """Load global CSS from methods"""
+    css_file = os.path.join(os.path.dirname(__file__), "styles.css")
+    with open(css_file, "r", encoding="utf-8") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 def init_default_admin():
     """Tạo tài khoản Admin mặc định nếu hệ thống chưa có user nào"""
@@ -27,10 +39,21 @@ def init_default_admin():
     
     st.session_state["admin_checked"] = True
 
-def login_form():
+def login_form(cookie_manager=None):
     """Hiển thị form đăng nhập"""
+    load_custom_css()
+    
+    if cookie_manager is None:
+        cookie_manager = get_manager()
+    
     st.markdown("""
     <style>
+        [data-testid="stSidebar"] {
+            display: none;
+        }
+        [data-testid="collapsedControl"] {
+            display: none;
+        }
         .login-container {
             max-width: 400px;
             margin: 100px auto;
@@ -51,11 +74,18 @@ def login_form():
         with st.form("login_frm"):
             username = st.text_input("Tên đăng nhập", placeholder="admin")
             password = st.text_input("Mật khẩu", type="password", placeholder="******")
+            st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
             
             if st.form_submit_button("Đăng nhập", type="primary", use_container_width=True):
                 user = authenticate_user(username, password)
                 if user:
+                    # 1. Update session state
                     st.session_state["user"] = user
+                    
+                    # 2. Tạo session token & lưu cookie (7 ngày)
+                    token = create_user_session(username)
+                    cookie_manager.set("auth_token", token, expires_at=datetime.now() + timedelta(days=7))
+                    
                     st.success(f"Chào mừng {user.get('full_name')}!")
                     time.sleep(0.5)
                     st.rerun()
@@ -70,17 +100,49 @@ def require_login():
     """
     init_default_admin()
     
+    # 0. Init Cookie Manager
+    cookie_manager = get_manager()
+    
+    # 1. Check if already logged in session
     if "user" not in st.session_state:
-        login_form()
+        # 2. Try to login via Cookie
+        auth_token = cookie_manager.get(cookie="auth_token")
+        if auth_token:
+            user = verify_user_session(auth_token)
+            if user:
+                # 1. Update session state
+                st.session_state["user"] = user
+                st.rerun() # Reload để áp dụng state
+        
+        # 3. Handle "Wait for cookies" (Avoid Flicker)
+        # If we haven't tried waiting yet, and we don't have a token.
+        if "cookie_init" not in st.session_state:
+            st.session_state["cookie_init"] = True
+            # Force a rerun to allow cookie manager to sync
+            time.sleep(0.1) 
+            st.rerun()
+            
+        # 4. If we are here, it means we reran and STILL no token (or invalid).
+        login_form(cookie_manager)
         st.stop() # Dừng render nội dung bên dưới
     
     # Nếu đã login, hiển thị thông tin user ở sidebar
     user = st.session_state["user"]
     with st.sidebar:
-        st.divider()
-        st.write(f"👤 **{user.get('full_name', 'User')}**")
-        st.caption(f"Vai trò: {user.get('role', 'staff')}")
-        if st.button("Đăng xuất", type="secondary"):
+        # Compact User Profile
+        st.markdown(f"""
+        <div style="margin-bottom: 5px; padding-bottom: 5px; border-bottom: 1px solid rgba(255,255,255,0.2);">
+            <div style="font-size: 14px; font-weight: bold;">👤 {user.get('full_name', 'User')}</div>
+            <div style="font-size: 14px; opacity: 0.8;">Vai trò: {user.get('role', 'staff')}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("Đăng xuất", type="secondary", key="btn_logout"):
+            # Clear DB Session
+            delete_user_session(user.get("username"))
+            # Clear Cookie
+            cookie_manager.delete("auth_token")
+            # Clear Session State
             st.session_state.pop("user")
             st.rerun()
 
@@ -89,12 +151,44 @@ def apply_sidebar_style():
     Áp dụng CSS tùy chỉnh cho sidebar (left menu) trên tất cả các trang.
     Gọi hàm này ở đầu mỗi trang để đảm bảo sidebar có cùng style.
     """
+    load_custom_css()
+    
     st.markdown("""
     <style>
         /* Thay đổi màu nền của sidebar */
         [data-testid="stSidebar"] {
             background-color: #3A6F43; /* Màu xanh đậm */
             background-image: linear-gradient(180deg, #3A6F43 0%, #064232 100%);
+        }
+
+        /* Chỉnh vị trí nút đóng/mở sidebar (X / >) */
+        [data-testid="collapsedControl"] {
+            top: 3rem !important;
+            display: block !important;
+            z-index: 999999 !important;
+        }
+        
+        /* Chỉnh vị trí nút đóng/mở sidebar (X / >) */
+        [data-testid="collapsedControl"] {
+            top: 3rem !important;
+            display: block !important;
+            z-index: 999999 !important;
+            position: fixed !important;
+            left: 1rem !important;
+        }
+        
+        /* Chỉnh vị trí nút X (đóng sidebar) 
+           Sử dụng :not([kind="secondary"]) để tránh ảnh hưởng đến các nút menu khác
+           Dùng position: absolute để không làm vỡ layout
+        */
+        [data-testid="stSidebar"] button:not([kind="secondary"]) {
+             position: absolute !important;
+             top: 2rem !important;
+             right: 1rem !important;
+             margin-top: 1rem !important;
+             z-index: 999999 !important;
+             border: none !important;
+             background-color: transparent !important;
         }
         
         /* Thay đổi màu chữ trong sidebar */
@@ -117,12 +211,15 @@ def apply_sidebar_style():
         [data-testid="stSidebar"] h2,
         [data-testid="stSidebar"] h3 {
             color: #ffffff !important;
+            margin-bottom: 0px !important; /* Giảm margin dưới header */
+            padding-bottom: 0px !important;
         }
 
         /* --- TỐI ƯU KHOẢNG TRỐNG SIDEBAR --- */
         /* Giảm padding phía trên cùng của sidebar */
         section[data-testid="stSidebar"] > div {
-            padding-top: 2rem;
+            margin-top: -2rem;
+            padding-top: 0rem; /* Giảm từ 2rem -> 1rem */
         }
         
         /* Ẩn nút X tắt sidebar trên mobile nếu không cần thiết, hoặc chỉnh lại */
@@ -140,10 +237,12 @@ def apply_sidebar_style():
             transition: all 0.3s ease;
             margin-bottom: 2px !important; /* Giảm margin dưới */
             width: 100% !important;
-            padding-top: 4px !important; /* Giảm padding nút */
-            padding-bottom: 4px !important;
-            border-radius: 6px !important;
-            font-size: 14px !important; /* Giảm fontsize nhẹ */
+            padding-top: 2px !important; /* Giảm padding nút tối đa */
+            padding-bottom: 2px !important;
+            border-radius: 4px !important;
+            font-size: 13px !important; /* Giảm fontsize */
+            min-height: 2.2rem !important; /* Giảm chiều cao nút */
+            height: 2.2rem !important;
         }
         
         [data-testid="stSidebar"] button[kind="secondary"]:hover {
@@ -163,31 +262,59 @@ def apply_sidebar_style():
         [data-testid="stSidebar"] .menu-active-item {
             background-color: rgba(255, 255, 255, 0.22);
             padding: 5px 10px;
-            border-radius: 6px;
+            border-radius: 4px;
             margin-bottom: 2px;
             text-align: center;
             border: 1px solid rgba(255, 255, 255, 0.3);
-            font-size: 14px;
+            font-size: 13px;
+            font-weight: bold;
         }
         
         /* --- TỐI ƯU KHOẢNG TRỐNG MAIN PAGE --- */
         /* Giảm padding top của block container chính */
         .block-container {
-            padding-top: 2rem !important;
-            padding-bottom: 2rem !important;
+            margin-top: -2rem;
+            padding-top: 1rem !important; /* Giảm từ 2rem -> 1rem */
+            padding-bottom: 1rem !important;
+            max-width: 95% !important; /* Tăng chiều rộng nội dung */
         }
         
         /* Giảm khoảng cách giữa các element */
         .element-container {
-            margin-bottom: 0.5rem !important;
+            margin-bottom: 0.1rem !important; /* Giảm từ 0.5rem -> 0.3rem */
         }
         
         /* Header h1 gọn hơn */
         h1 {
             padding-top: 0rem !important;
-            padding-bottom: 0.5rem !important;
-            font-size: 2rem !important;
+            padding-bottom: 0rem !important;
+            font-size: 1.8rem !important;
+            margin-bottom: 0.5rem !important;
         }
+        
+        h2 {
+            padding-top: 0.5rem !important;
+            padding-bottom: 0.2rem !important;
+            margin-bottom: 0.2rem !important;
+        }
+        
+        h3 {
+            padding-top: 0.2rem !important;
+            padding-bottom: 0.2rem !important;
+            margin-bottom: 0rem !important;
+        }
+        
+        /* Giảm padding của metric */
+        [data-testid="stMetric"] {
+            padding: 0px !important;
+        }
+
+        /* Divider gọn hơn */
+        hr {
+            margin-top: 0.5rem !important;
+            margin-bottom: 0.5rem !important;
+        }
+        
     </style>
     """, unsafe_allow_html=True)
 
@@ -198,7 +325,7 @@ def create_custom_sidebar_menu():
     """
     import os
     
-    # Detect trang hiện tại từ file path
+    # Detect trang hiện tại (Giữ nguyên logic cũ)
     try:
         import inspect
         frame = inspect.currentframe()
@@ -221,12 +348,14 @@ def create_custom_sidebar_menu():
         current_page = st.session_state.get("current_page", "main")
     
     with st.sidebar:
-        st.markdown("### 🎋 Menu")
-        st.markdown("---")
+        # Tiêu đề Menu gọn hơn
+        st.markdown("""
+        <div style="margin-top: 10px; margin-bottom: 5px; border-bottom: 1px solid rgba(255,255,255,0.3); padding-bottom: 2px;">
+            <b style="font-size: 14px;">🎋 MENU</b>
+        </div>
+        """, unsafe_allow_html=True)
         
-        # Định nghĩa menu items với tên tùy chỉnh
-        # Format: (Icon, Label, PageID, PagePath, AcceptRoles)
-        # AcceptRoles = None (All) or List of Roles
+        # Định nghĩa menu items (Giữ nguyên logic cũ)
         all_menu_items = [
             ("🏠", "Trang chủ", "main", "main.py", None),
             ("🏨", "Sơ đồ phòng", "dashboard", "pages/1_Dashboard.py", None),
@@ -234,27 +363,17 @@ def create_custom_sidebar_menu():
             ("🍽️", "Dịch vụ & Ăn uống", "services", "pages/5_Services.py", None),
             ("💸", "Trả phòng", "checkout", "pages/3_Checkout.py", None),
             ("📊", "Báo cáo", "finance", "pages/3_Finance.py", [UserRole.ADMIN, UserRole.MANAGER, UserRole.ACCOUNTANT]),
-            ("⚙️", "Cài đặt", "settings", "pages/9_Settings.py", [UserRole.ADMIN, UserRole.MANAGER]), # Kế toán vào settings xem only thì handle trong page
+            ("⚙️", "Cài đặt", "settings", "pages/9_Settings.py", [UserRole.ADMIN, UserRole.MANAGER]), 
         ]
         
-        # Filter by Role
         user = st.session_state.get("user")
         user_role = user.get("role") if user else None
-        
-        # Nếu chưa login (đang ở màn hình login), có thể hiển thị menu trống hoặc cơ bản?
-        # Nhưng require_login() stop rồi nên k thấy menu đâu.
-        # Nếu đã login:
         
         for icon, label, page_id, page_path, roles in all_menu_items:
             # Check permission
             if roles and user_role:
                 if user_role not in roles:
                     continue # Skip
-            
-            # Special case: Manager cannot access Staff tab in settings? 
-            # That's inside the page logic. Here we just gate the page access.
-            # Kế toán: Không vào Settings (theo list trên).
-            # Nhưng yêu cầu user là Kế toán xem dashboard, booking, finance. Done.
             
             is_current = (current_page == page_id)
             
@@ -269,8 +388,4 @@ def create_custom_sidebar_menu():
                     try:
                         st.switch_page(page_path)
                     except Exception as e:
-                        # Fallback: reload page với query param
                         st.rerun()
-        
-        # st.markdown("---") # Moved to require_login footer
-        # st.caption("The Bamboo Resort")

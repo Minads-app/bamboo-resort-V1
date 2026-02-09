@@ -7,7 +7,7 @@ from src.models import ServiceItem, ServiceCategory, ServiceOrder, RoomStatus
 from src.db import (
     get_all_services, save_service, delete_service,
     get_occupied_rooms, add_service_order, get_orders_by_booking,
-    get_all_rooms # Để lấy tên phòng nếu cần
+    get_all_rooms, get_recent_service_orders
 )
 from src.ui import apply_sidebar_style, create_custom_sidebar_menu, require_login
 
@@ -272,10 +272,26 @@ with tab_menu:
 # TAB 3: LỊCH SỬ (Simple View)
 # ---------------------------------------------------------
 with tab_history:
-    st.subheader("📜 Nhật ký Order (Gần đây)")
-    # Should get all orders or filter?
-    # For now, let's list all service_orders collection (Need a new func getAllOrders if needed, or query by date).
-    # Since we didn't write get_all_service_orders, let's skip or add it if requested.
-    # For user convenience, let's just show a placeholder or basic idea.
+    st.subheader("📜 Nhật ký Order (20 đơn gần nhất)")
     
-    st.info("Tính năng xem lịch sử toàn bộ đang phát triển. Bạn có thể xem chi tiết trong từng Booking History.")
+    orders = get_recent_service_orders(limit=20)
+    
+    if not orders:
+        st.info("Chưa có order nào được ghi nhận.")
+    else:
+        for idx, o in enumerate(orders):
+            # Format time
+            ts = o.get("created_at")
+            t_str = ts.strftime("%H:%M %d/%m/%Y") if isinstance(ts, datetime) else "N/A"
+            
+            # Title: Time - Room - Total
+            title = f"{t_str} | Phòng: **{o.get('room_id')}** | Tổng: :red[**{o.get('total_value', 0):,.0f} đ**]"
+            
+            with st.expander(title, expanded=(idx == 0)):
+                st.caption(f"Booking ID: {o.get('booking_id')}")
+                st.write("**Chi tiết món:**")
+                for item in o.get("items", []):
+                    st.write(f"- {item['name']} ({item['price']:,.0f}) x{item['qty']} = **{item['total']:,.0f} đ**")
+                
+                if o.get("note"):
+                    st.info(f"Ghi chú: {o.get('note')}")

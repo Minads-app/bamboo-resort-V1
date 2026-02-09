@@ -7,24 +7,19 @@ from src.models import RoomStatus, BookingStatus
 st.set_page_config(
     page_title="QUẢN LÝ PHÒNG KHÁCH SẠN The Bamboo Resort",
     page_icon="🎋",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
 from src.ui import require_login
 require_login()
 
 # Áp dụng CSS cho sidebar và tạo custom menu
+# Áp dụng CSS cho sidebar và tạo custom menu
 apply_sidebar_style()
 create_custom_sidebar_menu()
 
-st.title("🎋 QUẢN LÝ PHÒNG KHÁCH SẠN The Bamboo Resort")
-
-st.markdown("""
-### Chào mừng trở lại!
-Hệ thống quản lý đang chạy. Vui lòng chọn chức năng ở thanh bên trái (Sidebar).
-""")
-
-st.divider()
+st.markdown("<h1 style='text-align: center; margin-bottom: 5px;'>🎋 QUẢN LÝ PHÒNG KHÁCH SẠN</h1>", unsafe_allow_html=True)
 
 # --- 1. THỐNG KÊ NHANH ---
 rooms = get_all_rooms()
@@ -55,18 +50,29 @@ for b in bookings:
         if d == today:
             today_reserved.append(b)
 
+# Hiển thị Metric gọn hơn
+st.markdown("""
+<style>
+div[data-testid="stMetricValue"] {
+    font-size: 24px !important;
+}
+div[data-testid="stMetricLabel"] {
+    font-size: 14px !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("Tổng số phòng", total_rooms)
 with col2:
     st.metric("Phòng đang trống", available_rooms)
 with col3:
-    st.metric("Khách đặt phòng hôm nay", len(today_reserved))
-
-st.markdown("---")
+    st.metric("Khách đến hôm nay", len(today_reserved))
 
 # --- 2. DANH SÁCH KHÁCH ĐẶT PHÒNG HÔM NAY ---
-st.subheader("📅 Danh sách khách đặt phòng hôm nay")
+st.markdown("---")
+st.markdown("##### 📅 Khách đặt phòng hôm nay")
 
 if not today_reserved:
     st.info("Hôm nay chưa có khách đặt phòng trước.")
@@ -81,14 +87,12 @@ else:
                 "Phòng": b.get("room_id", ""),
                 "Khách": b.get("customer_name", ""),
                 "SĐT": b.get("customer_phone", ""),
-                "Check-in dự kiến": check_in.strftime("%d/%m/%Y %H:%M") if check_in else "",
-                "Check-out dự kiến": check_out.strftime("%d/%m/%Y %H:%M") if check_out else "",
+                "Check-in": check_in.strftime("%H:%M") if check_in else "",
+                "Check-out": check_out.strftime("%H:%M") if check_out else "",
             }
         )
 
     try:
-        import pandas as pd
-
         import pandas as pd
         df = pd.DataFrame(rows)
         st.dataframe(df, use_container_width=True, hide_index=True)
@@ -96,7 +100,7 @@ else:
         for r in rows:
             st.write(
                 f"**Phòng {r['Phòng']}** - {r['Khách']} ({r['SĐT']}) | "
-                f"{r['Check-in dự kiến']} → {r['Check-out dự kiến']}"
+                f"{r['Check-in']} → {r['Check-out']}"
             )
 
-st.caption("Hệ thống đang: 🟢 Online | Powered by MinAds")
+st.caption("MinAds Hotel Manager 1.0")

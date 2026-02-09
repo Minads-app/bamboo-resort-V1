@@ -2,7 +2,7 @@
 # Màu nền chính của sidebar (có thể dùng hex hoặc tên màu)
 primaryColor = "#0068c9"
 backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f0f2f6"
+secondaryBackgroundColor = "#3A6F43"
 textColor = "#262730"
 font = "sans serif"
 
@@ -14,3 +14,4 @@ enableXsrfProtection = false
 
 [client]
 toolbarMode = "minimal"
+showSidebarNavigation = false

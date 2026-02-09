@@ -4,3 +4,4 @@ pydantic
 pandas
 plotly
 pyngrok
+extra-streamlit-components
