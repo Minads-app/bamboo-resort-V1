@@ -34,11 +34,15 @@ def init_firebase():
         except Exception as e:
             st.error(f"Lỗi khởi tạo Firebase: {e}")
 
-def get_db():
-    """Lấy object kết nối tới DB"""
-    # Đảm bảo đã init chác chắn
+@st.cache_resource
+def get_firebase_client():
+    """Cache connection to Firestore to prevent re-initializing on every run"""
     init_firebase()
     return firestore.client()
+
+def get_db():
+    """Lấy object kết nối tới DB (Cached)"""
+    return get_firebase_client()
 
 # --- 2. LOGIC XỬ LÝ DỮ LIỆU (CRUD) ---
 
@@ -49,9 +53,12 @@ def save_room_type_to_db(room_type_data: dict):
     doc_id = room_type_data.get("type_code")
     if doc_id:
         db.collection("config_room_types").document(doc_id).set(room_type_data)
+        # Clear cache when data changes
+        get_all_room_types.clear()
 
+@st.cache_data(ttl=3600)
 def get_all_room_types():
-    """Lấy danh sách tất cả loại phòng"""
+    """Lấy danh sách tất cả loại phòng (Cached 1h)"""
     db = get_db()
     docs = db.collection("config_room_types").stream()
     return [doc.to_dict() for doc in docs]
@@ -61,6 +68,7 @@ def delete_room_type(type_code: str):
     db = get_db()
     if type_code:
         db.collection("config_room_types").document(type_code).delete()
+        get_all_room_types.clear()
 
 # --- LOGIC PHÒNG (ROOMS) ---
 

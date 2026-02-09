@@ -720,14 +720,7 @@ with tab_system:
                 "holiday_notes": sys_conf.get("holiday_notes", {}),
                 "weekend_weekdays": sys_conf.get("weekend_weekdays", [5, 6])
             }
-            save_system_config(content=new_conf) # Hàm save_system_config mặc định lưu vào 'system' collection nếu ko chỉ định key? 
-            # Kiểm tra lại hàm save_system_config trong db.py: def save_system_config(key="system", content={}): 
-            # À, file db.py có vẻ dùng key="system" mặc định hoặc phải truyền.
-            # Trong code cũ: save_system_config("special_days", cfg).
-            # Vậy ở đây ta nên lưu vào key="general_info" hoặc update vào "system" chung?
-            # Để đơn giản và tránh conflict với special_days, ta lưu vào "general_info".
-            # Tuy nhiên, model SystemConfig đang gom hết. 
-            # Tốt nhất là lưu vào key "general_info"
+            # Lưu vào key 'general_info'
             save_system_config("general_info", new_conf)
             st.toast("Đã lưu thông tin đơn vị!", icon="🏢")
             st.rerun()
