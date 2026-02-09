@@ -342,9 +342,6 @@ with tab_special_days:
                 else:
                      st.warning("Ngày này đã có.")
         
-        st.write("---")
-        # Helper: Thêm lễ VN cơ bản
-        st.write("---")
         # Helper: Thêm lễ VN cơ bản (2025-2027)
         if st.button("Thêm nhanh Lễ Tết VN (2025-2027)", use_container_width=True):
             holidays_list = []
