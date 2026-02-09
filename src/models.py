@@ -54,7 +54,7 @@ class RoomStatus(str, Enum):
 class Room(BaseModel):
     id: str                 # Số phòng: 101, 201
     room_type_code: str     # Link tới RoomType (VD: STD)
-    floor: int              # Tầng 1, 2
+    floor: str              # Khu vực / Tầng (VD: Khu A, Tầng 1)
     status: RoomStatus = RoomStatus.AVAILABLE
     note: str = ""
     current_booking_id: Optional[str] = None # Link tới booking đang ở

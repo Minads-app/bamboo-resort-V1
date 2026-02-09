@@ -161,9 +161,9 @@ def get_status_style(status_str):
 col_filter, col_stats = st.columns([1.2, 2.8])
 
 with col_filter:
-    # Lấy danh sách tầng duy nhất
-    floors = sorted(list(set([r["floor"] for r in rooms]))) if rooms else []
-    filter_floor = st.multiselect("Lọc theo tầng", options=floors)
+    # Lấy danh sách khu vực duy nhất
+    floors = sorted(list(set([str(r["floor"]) for r in rooms]))) if rooms else []
+    filter_floor = st.multiselect("Lọc theo Khu vực", options=floors)
 
     st.markdown("**🔍 Tìm khách ĐẶT TRƯỚC**")
     search_text = st.text_input(
@@ -220,12 +220,6 @@ st.markdown("---")
 
 # --- 3. VẼ SƠ ĐỒ PHÒNG (GRID) ---
 if rooms:
-    # Sắp xếp phòng
-    rooms.sort(key=lambda x: (x['floor'], x['id']))
-    
-    # Lọc phòng
-    display_rooms = [r for r in rooms if not filter_floor or r['floor'] in filter_floor]
-
     # Custom CSS để hiển thị Card đẹp hơn
     st.markdown("""
     <style>
@@ -235,99 +229,107 @@ if rooms:
         text-align: center;
         margin-bottom: 10px;
         color: #333;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
     .room-id { font-weight: bold; font-size: 1.2em; }
     .room-type { font-size: 0.8em; color: #666; }
     </style>
     """, unsafe_allow_html=True)
-
-    # Chia lưới: 6 phòng 1 hàng
-    cols = st.columns(6)
     
-    for i, room in enumerate(display_rooms):
-        col = cols[i % 6]
-        with col:
-            status = room.get('status', RoomStatus.AVAILABLE)
-            icon, bg_color, border_style = get_status_style(status)
+    # 1. Lọc phòng theo bộ lọc
+    filtered_rooms = [r for r in rooms if not filter_floor or str(r.get('floor', '')) in filter_floor]
+    
+    if not filtered_rooms:
+        st.info("Không tìm thấy phòng phù hợp với bộ lọc.")
+    else:
+        # 2. Nhóm theo Khu vực
+        # Lấy danh sách khu vực hiện có -> sorted
+        unique_areas = sorted(list(set([str(r.get('floor', 'Khác') or 'Khác') for r in filtered_rooms])))
+        
+        for area in unique_areas:
+            # Lấy phòng thuộc khu vực này
+            area_rooms = [r for r in filtered_rooms if str(r.get('floor', 'Khác') or 'Khác') == area]
             
-            # Hiển thị Custom Card bằng HTML (để chỉnh màu nền chính xác hơn st.container)
-            st.markdown(f"""
-            <div class="room-card" style="background-color: {bg_color}; {border_style}">
-                <div class="room-id">{room['id']}</div>
-                <div class="room-type">{type_map.get(room['room_type_code'], room['room_type_code'])}</div>
-                <div style="margin-top: 5px;">{icon} {status}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            # Sắp xếp theo ID
+            area_rooms.sort(key=lambda x: x['id'])
             
-            # Nút thao tác nhanh dưới mỗi phòng
-            with st.popover("Thao tác", use_container_width=True):
-                st.write(f"**Phòng {room['id']}**")
-                st.caption(f"Trạng thái: {status}")
+            # Hiển thị Header Khu vực
+            st.subheader(f"🏙️ {area} ({len(area_rooms)} phòng)")
+            
+            # Chia lưới: 6 phòng 1 hàng
+            cols = st.columns(6)
+            
+            for i, room in enumerate(area_rooms):
+                col = cols[i % 6]
+                with col:
+                    status = room.get('status', RoomStatus.AVAILABLE)
+                    icon, bg_color, border_style = get_status_style(status)
+                    
+                    # Hiển thị Custom Card
+                    st.markdown(f"""
+                    <div class="room-card" style="background-color: {bg_color}; {border_style}">
+                        <div class="room-id">{room['id']}</div>
+                        <div class="room-type">{type_map.get(room['room_type_code'], room['room_type_code'])}</div>
+                        <div style="margin-top: 5px;">{icon} {status}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Nút thao tác nhanh
+                    with st.popover("Thao tác", use_container_width=True):
+                        st.write(f"**Phòng {room['id']}**")
+                        st.caption(f"Trạng thái: {status}")
 
-                # Lấy thông tin booking (nếu phòng có current_booking_id)
-                booking_info = None
-                booking_id = room.get("current_booking_id")
-                if booking_id:
-                    try:
-                        booking_info = get_booking_by_id(booking_id)
-                    except Exception:
                         booking_info = None
-
-                if status == RoomStatus.AVAILABLE:
-                    # Cho phép đi thẳng sang trang Booking với phòng đã chọn
-                    if st.button("🛎️ Booking", key=f"booking_{room['id']}", use_container_width=True):
-                        st.session_state["prefill_room_id"] = room["id"]
-                        try:
-                            st.switch_page("pages/2_Booking.py")
-                        except Exception:
-                            st.info("Không chuyển trang được. Vui lòng chọn menu **Booking** ở sidebar.")
-
-                elif status == RoomStatus.OCCUPIED:
-                    # Xem thông tin khách đang ở
-                    if booking_info:
-                        with st.expander("👁 Xem thông tin khách đang ở", expanded=False):
-                            st.write(f"**Khách:** {booking_info.get('customer_name', '')}")
-                            st.write(f"**SĐT:** {booking_info.get('customer_phone', '')}")
-                            st.write(f"**Check-in:** {booking_info.get('check_in').strftime('%d/%m/%Y %H:%M') if booking_info.get('check_in') else ''}")
-                            st.write(f"**Dự kiến trả:** {booking_info.get('check_out_expected').strftime('%d/%m/%Y %H:%M') if booking_info.get('check_out_expected') else ''}")
-
-                    st.warning("Bạn chắc chắn muốn Checkout?")
-                    c_yes, c_no = st.columns(2)
-                    with c_yes:
-                        if st.button("✅ Có, Checkout", key=f"checkout_yes_{room['id']}", use_container_width=True):
-                            # Chuyển sang trang Checkout, chọn sẵn phòng này
-                            st.session_state["prefill_checkout_room_id"] = room["id"]
+                        booking_id = room.get("current_booking_id")
+                        if booking_id:
                             try:
-                                st.switch_page("pages/3_Checkout.py")
+                                booking_info = get_booking_by_id(booking_id)
                             except Exception:
-                                st.info("Không chuyển trang được. Vui lòng chọn menu **Trả phòng** ở sidebar.")
-                    with c_no:
-                        st.button("❌ Không", key=f"checkout_no_{room['id']}", use_container_width=True)
+                                booking_info = None
 
-                elif status == RoomStatus.RESERVED:
-                    st.warning("Phòng đang **Đặt trước**.")
+                        if status == RoomStatus.AVAILABLE:
+                            if st.button("🛎️ Booking", key=f"booking_{room['id']}", use_container_width=True):
+                                st.session_state["prefill_room_id"] = room["id"]
+                                try:
+                                    st.switch_page("pages/2_Booking.py")
+                                except Exception:
+                                    st.info("Vui lòng truy cập menu Booking.")
 
-                    # Xem thông tin khách đặt
-                    if booking_info:
-                        with st.expander("👁 Xem thông tin khách đặt", expanded=False):
-                            st.write(f"**Khách:** {booking_info.get('customer_name', '')}")
-                            st.write(f"**SĐT:** {booking_info.get('customer_phone', '')}")
-                            st.write(f"**Giờ dự kiến đến:** {booking_info.get('check_in').strftime('%d/%m/%Y %H:%M') if booking_info.get('check_in') else ''}")
-                            st.write(f"**Giờ dự kiến trả:** {booking_info.get('check_out_expected').strftime('%d/%m/%Y %H:%M') if booking_info.get('check_out_expected') else ''}")
+                        elif status == RoomStatus.OCCUPIED:
+                            if booking_info:
+                                with st.expander("👁 Thông tin khách", expanded=True):
+                                    st.write(f"**{booking_info.get('customer_name', '')}**")
+                                    st.write(f"Check-in: {booking_info.get('check_in').strftime('%d/%m %H:%M') if booking_info.get('check_in') else ''}")
+                            
+                            c_yes, c_no = st.columns(2)
+                            if c_yes.button("Trả phòng", key=f"co_yes_{room['id']}", type="primary", use_container_width=True):
+                                st.session_state["prefill_checkout_room_id"] = room["id"]
+                                try:
+                                    st.switch_page("pages/3_Checkout.py")
+                                except Exception:
+                                    st.info("Vui lòng truy cập menu Trả phòng.")
 
-                    if st.button("✅ Check-in ngay", key=f"checkin_{room['id']}", type="primary", use_container_width=True):
-                        ok, msg = check_in_reserved_room(room["id"])
-                        if ok:
-                            st.success(f"Đã check-in phòng {room['id']}! (Booking: {msg})")
-                            st.rerun()
-                        else:
-                            st.error(f"Lỗi: {msg}")
+                        elif status == RoomStatus.RESERVED:
+                            st.info("Đã đặt trước.")
+                            if booking_info:
+                                with st.expander("👁 Thông tin khách", expanded=True):
+                                    st.write(f"**{booking_info.get('customer_name', '')}**")
+                                    st.write(f"Dự kiến: {booking_info.get('check_in').strftime('%d/%m %H:%M') if booking_info.get('check_in') else ''}")
 
-                elif status == RoomStatus.DIRTY:
-                    if st.button("🧹 Đã dọn xong", key=f"clean_{room['id']}", use_container_width=True):
-                        from src.db import update_room_status
-                        update_room_status(room['id'], RoomStatus.AVAILABLE)
-                        st.rerun()
+                            if st.button("Check-in ngay", key=f"checkin_{room['id']}", type="primary", use_container_width=True):
+                                ok, msg = check_in_reserved_room(room["id"])
+                                if ok:
+                                    st.success(f"Đã check-in {room['id']}!")
+                                    st.rerun()
+                                else:
+                                    st.error(msg)
+                        
+                        elif status == RoomStatus.DIRTY:
+                            if st.button("🧹 Dọn xong", key=f"clean_{room['id']}", use_container_width=True):
+                                from src.db import update_room_status
+                                update_room_status(room['id'], RoomStatus.AVAILABLE)
+                                st.rerun()
+            st.divider()
 
 else:
     st.info("Chưa có dữ liệu phòng. Vui lòng vào trang Settings để tạo.")

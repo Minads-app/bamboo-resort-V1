@@ -553,77 +553,123 @@ with tab_special_days:
 
     # --- TAB 3: QUẢN LÝ DANH SÁCH PHÒNG ---
 with tab_rooms:
-    # Lấy danh sách loại phòng để nạp vào Selectbox
+    # Lấy danh sách loại phòng để nạp vào Selectbox (Move up to be available for both)
     all_types = get_all_room_types()
     if not all_types:
         st.warning("⚠️ Vui lòng tạo 'Loại phòng' bên Tab 1 trước!")
     else:
-        # Tạo dictionary dạng {"STD": "Phòng Đơn", "VIP": "Phòng VIP"} để hiển thị cho đẹp
-        type_options = {
-            t["type_code"]: f"{t['name']} ({t['type_code']})" for t in all_types
-        }
+        # Tạo dictionary map
+        type_options = {t["type_code"]: f"{t['name']} ({t['type_code']})" for t in all_types}
+        type_map_simple = {t["type_code"]: t["name"] for t in all_types}
 
         c_add, c_view = st.columns([1, 2])
+        
+        # --- STATE MANAGEMENT ---
+        if "edit_room" not in st.session_state:
+            st.session_state["edit_room"] = None
+        
+        edit_room_data = st.session_state["edit_room"]
+        is_edit_room = edit_room_data is not None
 
-        # 1. Form thêm phòng
+        # 1. Form thêm/sửa phòng
         with c_add:
-            with st.form("frm_add_room"):
-                st.subheader("➕ Thêm Phòng Mới")
-                r_id = st.text_input("Số phòng", placeholder="101").strip()
-                r_type_code = st.selectbox(
-                    "Loại phòng",
-                    options=list(type_options.keys()),
-                    format_func=lambda x: type_options[x],
-                )
-                r_floor = st.number_input("Tầng", min_value=1, value=1)
+            with st.container(border=True):
+                form_title = f"✏️ Sửa Phòng {edit_room_data['id']}" if is_edit_room else "➕ Thêm Phòng Mới"
+                st.subheader(form_title)
+                
+                # Default values
+                d_id = ""
+                d_type = list(type_options.keys())[0] if type_options else ""
+                d_floor = ""
+                d_status = RoomStatus.AVAILABLE
+                
+                if is_edit_room:
+                    d_id = edit_room_data["id"]
+                    d_type = edit_room_data["room_type_code"]
+                    d_floor = str(edit_room_data.get("floor", ""))
+                
+                with st.form("frm_room"):
+                    # Nếu edit thì không cho sửa ID để tránh lỗi logic, hoặc phải handle delete old -> create new
+                    # Đơn giản nhất: Disable ID khi edit
+                    r_id = st.text_input("Số phòng", value=d_id, placeholder="101", disabled=is_edit_room).strip()
+                    r_type_code = st.selectbox(
+                        "Loại phòng",
+                        options=list(type_options.keys()),
+                        format_func=lambda x: type_options[x],
+                        index=list(type_options.keys()).index(d_type) if d_type in type_options else 0
+                    )
+                    r_floor = st.text_input("Khu vực", value=d_floor, placeholder="VD: Tầng 1, Khu A...").strip()
 
-                if st.form_submit_button("Lưu Phòng", type="primary"):
-                    if r_id:
-                        new_room = Room(
-                            id=r_id,
-                            room_type_code=r_type_code,
-                            floor=r_floor,
-                            status=RoomStatus.AVAILABLE,
-                        )
-                        save_room_to_db(new_room.to_dict())
-                        st.toast(f"Đã thêm phòng {r_id}", icon="✅")
+                    btn_lbl = "💾 Cập nhật" if is_edit_room else "Lưu Phòng"
+                    if st.form_submit_button(btn_lbl, type="primary"):
+                        if r_id:
+                            new_room = Room(
+                                id=r_id,
+                                room_type_code=r_type_code,
+                                floor=r_floor or "Khu vực 1",
+                                status=RoomStatus.AVAILABLE, # Khôi phục status mặc định hoặc giữ nguyên?
+                                # Thực tế nếu edit, ta nên giữ nguyên status cũ trừ khi muốn reset
+                            )
+                            # Nếu đang edit, giữ status cũ
+                            if is_edit_room:
+                                new_room.status = edit_room_data.get("status", RoomStatus.AVAILABLE)
+                                new_room.current_booking_id = edit_room_data.get("current_booking_id")
+                                new_room.note = edit_room_data.get("note", "")
+
+                            save_room_to_db(new_room.to_dict())
+                            msg = "Cập nhật" if is_edit_room else "Thêm mới"
+                            st.toast(f"✅ {msg} phòng {r_id} thành công!", icon="🎉")
+                            st.session_state["edit_room"] = None
+                            st.rerun()
+                        else:
+                            st.error("Chưa nhập số phòng!")
+                
+                if is_edit_room:
+                    if st.button("❌ Hủy bỏ thay đổi", use_container_width=True):
+                        st.session_state["edit_room"] = None
                         st.rerun()
-                    else:
-                        st.error("Chưa nhập số phòng!")
 
         # 2. Danh sách phòng hiện có
         with c_view:
-            st.subheader("Danh sách Phòng")
+            st.subheader("📋 Danh sách Phòng")
             rooms = get_all_rooms()
             if rooms:
-                # Chuyển thành DataFrame để hiển thị bảng
-                df_rooms = pd.DataFrame(rooms)
+                # Header row
+                h1, h2, h3, h4, h5 = st.columns([1, 1.5, 1.5, 1.5, 1.5])
+                h1.markdown("**Phòng**")
+                h2.markdown("**Loại**")
+                h3.markdown("**Khu vực**")
+                h4.markdown("**Trạng thái**")
+                h5.markdown("**Thao tác**")
+                st.divider()
+                
+                # Sort rooms by Area then ID
+                rooms.sort(key=lambda x: (str(x.get("floor","")), x["id"]))
 
-                # Map mã loại phòng sang tên cho dễ đọc
-                df_rooms["Loại"] = df_rooms["room_type_code"].map(
-                    lambda x: type_options.get(x, x)
-                )
-
-                # Hiển thị bảng
-                st.dataframe(
-                    df_rooms[["id", "Loại", "floor", "status"]],
-                    column_config={
-                        "id": "Số Phòng",
-                        "floor": "Tầng",
-                        "status": "Trạng thái",
-                    },
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-                # Xóa nhanh (Demo đơn giản)
-                with st.expander("🗑️ Xóa phòng"):
-                    del_id = st.selectbox(
-                        "Chọn phòng cần xóa", [r["id"] for r in rooms]
-                    )
-                    if st.button("Xác nhận xóa"):
-                        delete_room(del_id)
-                        st.rerun()
+                for r in rooms:
+                    c1, c2, c3, c4, c5 = st.columns([1, 1.5, 1.5, 1.5, 1.5])
+                    c1.write(f"**{r['id']}**")
+                    c2.write(type_map_simple.get(r['room_type_code'], r['room_type_code']))
+                    c3.write(str(r.get('floor', '')))
+                    
+                    # Status coloring helper (reusing logic implicitly or simplified)
+                    stt = r.get('status', RoomStatus.AVAILABLE)
+                    color = "green" if stt == RoomStatus.AVAILABLE else "red" if stt == RoomStatus.OCCUPIED else "orange"
+                    c4.markdown(f":{color}[{stt}]")
+                    
+                    # Actions
+                    with c5:
+                        b_edit, b_del = st.columns(2)
+                        if b_edit.button("✏️", key=f"btn_edit_{r['id']}", help="Sửa thông tin"):
+                            st.session_state["edit_room"] = r
+                            st.rerun()
+                        
+                        if b_del.button("🗑️", key=f"btn_del_{r['id']}", help="Xóa phòng này"):
+                            delete_room(r['id'])
+                            if st.session_state.get("edit_room", {}).get("id") == r['id']:
+                                st.session_state["edit_room"] = None
+                            st.rerun()
+                    st.markdown("---")
             else:
                 st.info("Chưa có phòng nào. Hãy thêm ở bên trái.")
 

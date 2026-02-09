@@ -402,14 +402,18 @@ def get_completed_bookings(start_dt: datetime | None = None, end_dt: datetime | 
         status = b.get("status")
         if hasattr(status, "value"):
             status = status.value
+            
         # Ưu tiên booking có check_out_actual, vì đó là phát sinh doanh thu thực
         ts = b.get("check_out_actual")
-        if ts and _in_range(ts):
-            # Nếu có check_out_actual, coi như đã hoàn tất (kể cả status chưa chuẩn)
-            results.append(b)
+        
+        if ts:
+            # Nếu có dữ liệu ngày tháng, chỉ lấy nếu NẰM TRONG khoảng thời gian
+            if _in_range(ts):
+                results.append(b)
+            # Nếu có ts nhưng không khớp range -> Bỏ qua luôn, không check status nữa
             continue
 
-        # Fallback: lọc theo status nếu thiếu check_out_actual (data cũ)
+        # Fallback: Chỉ check status nếu KHÔNG CÓ check_out_actual (data cũ/lỗi)
         if status in completed_statuses:
             # Nếu thiếu timestamp thì vẫn trả về (trang Finance sẽ loại/hiển thị cảnh báo)
             results.append(b)
