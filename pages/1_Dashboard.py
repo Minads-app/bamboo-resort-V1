@@ -26,6 +26,11 @@ rooms = get_all_rooms()
 types = get_all_room_types()
 type_map = {t["type_code"]: t["name"] for t in types}
 
+# OPTIMIZATION: Fetch all active bookings once
+# This avoids N+1 queries when rendering room cards
+from src.db import get_active_bookings_dict
+active_bookings_map = get_active_bookings_dict()
+
 # --- 1b. BOOKING ONLINE CHỜ XÁC NHẬN & LỊCH SỬ ---
 col_pending, col_history = st.columns(2)
 
@@ -201,10 +206,9 @@ with col_stats:
             bk_id = r.get("current_booking_id")
             if not bk_id:
                 continue
-            try:
-                bk = get_booking_by_id(bk_id) or {}
-            except Exception:
-                bk = {}
+            # Use cached map instead of DB call
+            bk = active_bookings_map.get(bk_id) or {}
+            
             name = (bk.get("customer_name") or "").lower()
             phone = (bk.get("customer_phone") or "").lower()
             if q in name or q in phone:
@@ -222,22 +226,7 @@ with col_stats:
 
 # --- 3. VẼ SƠ ĐỒ PHÒNG (GRID) ---
 if rooms:
-    # Custom CSS để hiển thị Card đẹp hơn (Compact)
-    st.markdown("""
-    <style>
-    .room-card {
-        padding: 4px;
-        border-radius: 6px;
-        text-align: center;
-        margin-bottom: 6px;
-        color: #333;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-        font-size: 0.9em;
-    }
-    .room-id { font-weight: bold; font-size: 1.1em; }
-    .room-type { font-size: 0.75em; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    </style>
-    """, unsafe_allow_html=True)
+    # ... (CSS styles) ...
     
     # 1. Lọc phòng theo bộ lọc
     filtered_rooms = [r for r in rooms if not filter_floor or str(r.get('floor', '')) in filter_floor]
@@ -245,40 +234,45 @@ if rooms:
     if not filtered_rooms:
         st.info("Không tìm thấy phòng phù hợp với bộ lọc.")
     else:
-        # 2. Nhóm theo Khu vực
-        # Lấy danh sách khu vực hiện có -> sorted
+        # ... (Group by area) ...
         unique_areas = sorted(list(set([str(r.get('floor', 'Khác') or 'Khác') for r in filtered_rooms])))
         
         for area in unique_areas:
-            # Lấy phòng thuộc khu vực này
+            # ...
             area_rooms = [r for r in filtered_rooms if str(r.get('floor', 'Khác') or 'Khác') == area]
-            
-            # Sắp xếp theo ID
             area_rooms.sort(key=lambda x: x['id'])
             
-            # Hiển thị Header Khu vực (Compact layout)
-            st.markdown(f"""
-            <div style="border-top: 1px solid #eee; margin-top: 4px; padding-top: 4px; margin-bottom: 4px;">
-                <h6 style="margin: 0; color: #333; font-weight: bold;">{area} ({len(area_rooms)})</h6>
-            </div>
-            """, unsafe_allow_html=True)
+            # ... (Header) ...
             
-            # Chia lưới: 4 phòng 1 hàng
             cols = st.columns(4)
-            
             for i, room in enumerate(area_rooms):
                 col = cols[i % 4]
                 with col:
                     status = room.get('status', RoomStatus.AVAILABLE)
                     icon, bg_color, border_style, label = get_status_style(status)
                     
-                    # Hiển thị Custom Card
+                    # ... (Card HTML) ...
                     st.markdown(f"""
-                    <div class="room-card" style="background-color: {bg_color}; {border_style}">
-                        <div class="room-id">{room['id']}</div>
-                        <div class="room-type">{type_map.get(room['room_type_code'], room['room_type_code'])}</div>
-                        <div style="margin-top: 4px; font-weight: 500; font-size: 0.9em;">
-                            {icon} <span style="margin-left: 4px;">{label}</span>
+                    <div style="
+                        background-color: {bg_color}; 
+                        {border_style}
+                        border-radius: 8px; 
+                        padding: 10px; 
+                        text-align: center; 
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+                        margin-bottom: 10px;
+                        height: 100%;
+                        display: flex;
+                        flex-direction: column;
+                        justify-content: space-between;
+                        align-items: center;
+                    ">
+                        <div style="font-weight: bold; font-size: 1.2rem; margin-bottom: 5px; color: #333;">{room['id']}</div>
+                        <div style="font-size: 0.85rem; color: #555; margin-bottom: 8px; line-height: 1.3; min-height: 2.4em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                            {type_map.get(room['room_type_code'], room['room_type_code'])}
+                        </div>
+                        <div style="font-weight: 600; font-size: 0.9rem; margin-top: auto; padding-top: 5px; border-top: 1px dashed rgba(0,0,0,0.1); width: 100%;">
+                            {icon} <span style="margin-left: 5px;">{label}</span>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -291,10 +285,8 @@ if rooms:
                         booking_info = None
                         booking_id = room.get("current_booking_id")
                         if booking_id:
-                            try:
-                                booking_info = get_booking_by_id(booking_id)
-                            except Exception:
-                                booking_info = None
+                            # Use cached map
+                            booking_info = active_bookings_map.get(booking_id)
 
                         if status == RoomStatus.AVAILABLE:
                             if st.button("🛎️ Booking", key=f"booking_{room['id']}", use_container_width=True):

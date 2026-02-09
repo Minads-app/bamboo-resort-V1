@@ -225,11 +225,7 @@ with tab_types:
                         st.error("Vui lòng nhập Mã và Tên phòng!")
                     else:
                         # Construct Pricing Objects Helper
-                        def build_price_config(d, o, h1, h2, h3, h_next):
-                            # Nếu tất cả bằng 0 -> Trả về None (để không lưu rác cho Weekend/Holiday)
-                            if d == 0 and o == 0 and h1 == 0:
-                                return None
-                            
+                        def build_price_config(d, o, h1, h2, h3, h_next, enable_h=True, enable_o=True, enable_d=True):
                             blocks = {
                                 "1": h1, "2": h2, "3": h3,
                                 "4": h3 + h_next
@@ -238,17 +234,18 @@ with tab_types:
                                 hourly_blocks=blocks,
                                 daily_price=float(d),
                                 overnight_price=float(o),
-                                enable_hourly=en_hourly,
-                                enable_overnight=en_overnight,
-                                enable_daily=en_daily
+                                enable_hourly=enable_h,
+                                enable_overnight=enable_o,
+                                enable_daily=enable_d
                             )
 
-                        pricing_main = build_price_config(d1, o1, h1_n, h2_n, h3_n, hn_result)
+                        pricing_main = build_price_config(d1, o1, h1_n, h2_n, h3_n, hn_result, en_hourly, en_overnight, en_daily)
                         # Fallback for main: Must not be None? Actually code expects main pricing.
                         # If user enters 0 for main, it might be an issue, but let's assume they enter valid data.
                         
-                        pricing_weekend_obj = build_price_config(d2, o2, h1_w, h2_w, h3_w, hw_result)
-                        pricing_holiday_obj = build_price_config(d3, o3, h1_h, h2_h, h3_h, hh_result)
+                        # Weekend and Holiday pricing inherit the enable flags from main pricing
+                        pricing_weekend_obj = build_price_config(d2, o2, h1_w, h2_w, h3_w, hw_result, en_hourly, en_overnight, en_daily) if (d2 or o2 or h1_w) else None
+                        pricing_holiday_obj = build_price_config(d3, o3, h1_h, h2_h, h3_h, hh_result, en_hourly, en_overnight, en_daily) if (d3 or o3 or h1_h) else None
                         
                         new_type = RoomType(
                             type_code=r_code,

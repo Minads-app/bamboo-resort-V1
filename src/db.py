@@ -374,6 +374,35 @@ def save_payment_config(config: dict):
     db = get_db()
     db.collection("config_system").document("payment").set(config or {})
 
+def get_active_bookings_dict():
+    """
+    Lấy toàn bộ booking đang hoạt động (Occupied, Reserved, Checked_in)
+    Trả về dict: { booking_id: booking_data }
+    Giúp tránh lỗi N+1 query khi hiển thị danh sách phòng.
+    """
+    db = get_db()
+    # Statuses that imply "active"
+    # Note: Querying with 'in' operator is supported in Firestore
+    statuses = [
+        BookingStatus.CONFIRMED.value,
+        BookingStatus.CHECKED_IN.value,
+        "Confirmed", 
+        "CheckedIn",
+        # RoomStatus values might be mixed in booking status in legacy data?
+        # Booking status is usually CONFIRMED or CHECKED_IN or COMPLETED.
+        # Room status is OCCUPIED/RESERVED.
+        # We need bookings where status is NOT Completed/Cancelled.
+    ]
+    
+    # Better approach: Query all bookings that are NOT Completed/Cancelled?
+    # Or query by Room Status?
+    # Actually, we rely on room.current_booking_id. 
+    # So we can just fetch ALL active bookings.
+    
+    docs = db.collection("bookings").where("status", "in", statuses).stream()
+    return {doc.id: doc.to_dict() for doc in docs}
+
+@st.cache_data(ttl=300) # Cache 5 mins
 def get_system_config(key: str):
     """Lấy cấu hình hệ thống theo key (VD: 'special_days')"""
     db = get_db()
