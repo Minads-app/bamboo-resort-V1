@@ -16,6 +16,10 @@ from src.logic import calculate_estimated_price, BookingType
 from src.ui import apply_sidebar_style, create_custom_sidebar_menu
 
 st.set_page_config(page_title="Trả phòng & Thanh toán", layout="wide")
+
+from src.ui import require_login
+require_login()
+
 apply_sidebar_style()
 create_custom_sidebar_menu()
 

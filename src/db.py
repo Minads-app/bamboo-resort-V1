@@ -166,12 +166,22 @@ def process_checkout(booking_id: str, room_id: str, final_amount: float, payment
     """
     db = get_db()
     try:
+        # Tự động tính lại tổng tiền dịch vụ (Service Orders) nếu có
+        # Lưu ý: final_amount truyền vào có thể đã bao gồm service_fee nếu UI tính rồi.
+        # Nhưng để chắc chắn, ta có thể lưu riêng field 'order_service_total' vào booking.
+        
+        # Ở đây ta giả định final_amount là TỔNG CỘNG (nguyên tiền phòng + dịch vụ).
+        # Nhưng ta nên lưu thêm thông tin service_fee (phụ thu) và order_service_total (tiền gọi món).
+        
+        total_service_orders = calculate_service_total(booking_id)
+        
         # Update Booking
         db.collection("bookings").document(booking_id).update({
             "status": "Completed",
             "check_out_actual": datetime.now(),
-            "total_amount": final_amount,
-            "service_fee": service_fee,
+            "total_amount": final_amount, 
+            "service_fee": service_fee, # Phụ thu khác
+            "order_service_total": total_service_orders, # Tiền gọi món
             "payment_method": payment_method,
             "note": note
         })
@@ -419,3 +429,113 @@ def get_completed_bookings(start_dt: datetime | None = None, end_dt: datetime | 
             results.append(b)
 
     return results
+
+# --- USER MANAGEMENT & AUTH ---
+
+import hashlib
+
+def hash_password(password: str) -> str:
+    """Hash mật khẩu bằng SHA256 (đơn giản, có thể nâng cấp thêm salt)"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def get_user(username: str):
+    """Lấy thông tin user theo username (email)"""
+    # Fix: Kiểm tra username rỗng hoặc chỉ chứa khoảng trắng để tránh lỗi Firestore InvalidArgument
+    if not username or not username.strip():
+        return None
+    
+    username = username.strip()
+    db = get_db()
+    try:
+        doc = db.collection("users").document(username).get()
+        if doc.exists:
+            return doc.to_dict()
+    except Exception:
+        return None
+    return None
+
+def create_user(user_data: dict):
+    """Tạo mới hoặc cập nhật user"""
+    db = get_db()
+    username = user_data.get("username")
+    if username:
+        db.collection("users").document(username).set(user_data)
+
+def delete_user(username: str):
+    """Xóa user"""
+    db = get_db()
+    if username:
+        db.collection("users").document(username).delete()
+
+def authenticate_user(username, password):
+    """
+    Xác thực người dùng. 
+    Trả về dict user nếu thành công, None nếu thất bại.
+    """
+    user = get_user(username)
+    if user and user.get("is_active", True):
+        # So sánh hash
+        if user.get("password_hash") == hash_password(password):
+            return user
+    return None
+
+def update_user_password(username: str, new_password: str):
+    """Đổi mật khẩu"""
+    if not username:
+        return
+    db = get_db()
+    new_hash = hash_password(new_password)
+    db.collection("users").document(username).update({"password_hash": new_hash})
+
+def get_all_users():
+    """Lấy danh sách tất cả users"""
+    db = get_db()
+    docs = db.collection("users").stream()
+    return [doc.to_dict() for doc in docs]
+
+# --- 6. SERVICES & ORDERS ---
+
+def get_all_services():
+    """Lấy danh sách Menu dịch vụ"""
+    db = get_db()
+    docs = db.collection("services").where("is_active", "==", True).stream()
+    return [doc.to_dict() for doc in docs]
+
+def save_service(service_data: dict):
+    """Lưu món ăn/dịch vụ"""
+    db = get_db()
+    if not service_data.get("id"):
+        service_data["id"] = str(uuid.uuid4())[:8]
+    db.collection("services").document(service_data["id"]).set(service_data)
+
+def delete_service(service_id: str):
+    """Xóa (hoặc ẩn) món ăn"""
+    db = get_db()
+    # Soft delete: update is_active = False 
+    # Nhưng user yêu cầu xóa: Delete luôn hoặc ẩn tùy logic. Ở đây làm ẩn an toàn hơn.
+    # Nhưng để đơn giản UI quản lý, ta delete luôn document nếu muốn.
+    # Thôi làm soft delete cho an toàn: set is_active=False? 
+    # Nhưng get_all_services đang filter is_active=True.
+    # Ok, delete thật cho gọn.
+    db.collection("services").document(service_id).delete()
+
+def add_service_order(order_data: dict):
+    """Tạo order dịch vụ mới"""
+    db = get_db()
+    if not order_data.get("id"):
+        order_data["id"] = str(uuid.uuid4())[:8]
+    
+    # 1. Lưu Order
+    db.collection("service_orders").document(order_data["id"]).set(order_data)
+    return True
+
+def get_orders_by_booking(booking_id: str):
+    """Lấy danh sách order của 1 booking"""
+    db = get_db()
+    docs = db.collection("service_orders").where("booking_id", "==", booking_id).stream()
+    return [doc.to_dict() for doc in docs]
+
+def calculate_service_total(booking_id: str):
+    """Tính tổng tiền dịch vụ của booking"""
+    orders = get_orders_by_booking(booking_id)
+    return sum(o.get("total_value", 0) for o in orders)

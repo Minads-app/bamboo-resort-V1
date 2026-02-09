@@ -16,21 +16,29 @@ from src.db import (
     get_payment_config,
     get_system_config,
     save_system_config,
+    create_user,
+    delete_user,
+    hash_password,
+    get_db,
+    get_all_users,
+    update_user_password,
 )
-from src.models import Room, RoomStatus, PriceConfig, RoomType
-from src.ui import apply_sidebar_style, create_custom_sidebar_menu
+from src.models import Room, RoomStatus, PriceConfig, RoomType, User, UserRole
+from src.ui import apply_sidebar_style, create_custom_sidebar_menu, require_login
 from datetime import date, datetime, timedelta
 
 st.set_page_config(page_title="Cấu hình hệ thống", layout="wide")
+
+require_login()
+
 apply_sidebar_style()
 create_custom_sidebar_menu()
 
 st.title("⚙️ Cấu hình The Bamboo Resort")
 
 # Sử dụng Tabs để phân chia khu vực quản lý
-# Sử dụng Tabs để phân chia khu vực quản lý
-tab_types, tab_special_days, tab_rooms, tab_system = st.tabs(
-    ["🏨 Loại Phòng & Giá", "📅 Cấu hình Lễ/Tết & Cuối tuần", "🛏️ Danh sách Phòng", "🛠️ Hệ thống & Thanh toán"]
+tab_types, tab_special_days, tab_rooms, tab_system, tab_staff = st.tabs(
+    ["🏨 Loại Phòng & Giá", "📅 Cấu hình Lễ/Tết & Cuối tuần", "🛏️ Danh sách Phòng", "🛠️ Hệ thống", "👥 Nhân viên"]
 )
 
 # --- TAB 1: QUẢN LÝ LOẠI PHÒNG ---
@@ -635,13 +643,14 @@ with tab_rooms:
             rooms = get_all_rooms()
             if rooms:
                 # Header row
-                h1, h2, h3, h4, h5 = st.columns([1, 1.5, 1.5, 1.5, 1.5])
-                h1.markdown("**Phòng**")
-                h2.markdown("**Loại**")
-                h3.markdown("**Khu vực**")
-                h4.markdown("**Trạng thái**")
-                h5.markdown("**Thao tác**")
-                st.divider()
+                # Custom compact header
+                headers = st.columns([1, 1.5, 1.5, 1.5, 1.5])
+                headers[0].markdown("**Phòng**")
+                headers[1].markdown("**Loại**")
+                headers[2].markdown("**Khu vực**")
+                headers[3].markdown("**Trạng thái**")
+                headers[4].markdown("**Thao tác**")
+                st.markdown('<hr style="margin: 5px 0; border-top: 1px solid #ddd;">', unsafe_allow_html=True)
                 
                 # Sort rooms by Area then ID
                 rooms.sort(key=lambda x: (str(x.get("floor","")), x["id"]))
@@ -652,14 +661,14 @@ with tab_rooms:
                     c2.write(type_map_simple.get(r['room_type_code'], r['room_type_code']))
                     c3.write(str(r.get('floor', '')))
                     
-                    # Status coloring helper (reusing logic implicitly or simplified)
+                    # Status coloring helper
                     stt = r.get('status', RoomStatus.AVAILABLE)
                     color = "green" if stt == RoomStatus.AVAILABLE else "red" if stt == RoomStatus.OCCUPIED else "orange"
                     c4.markdown(f":{color}[{stt}]")
                     
-                    # Actions
+                    # Actions - Compact buttons
                     with c5:
-                        b_edit, b_del = st.columns(2)
+                        b_edit, b_del = st.columns([1, 1], gap="small")
                         if b_edit.button("✏️", key=f"btn_edit_{r['id']}", help="Sửa thông tin"):
                             st.session_state["edit_room"] = r
                             st.rerun()
@@ -669,7 +678,7 @@ with tab_rooms:
                             if st.session_state.get("edit_room", {}).get("id") == r['id']:
                                 st.session_state["edit_room"] = None
                             st.rerun()
-                    st.markdown("---")
+                    st.markdown('<hr style="margin: 2px 0; border-top: 1px solid #eee;">', unsafe_allow_html=True)
             else:
                 st.info("Chưa có phòng nào. Hãy thêm ở bên trái.")
 
@@ -805,3 +814,151 @@ with tab_system:
             st.info(
                 "Nhập Mã ngân hàng (VietQR bankId/BIN) và Số tài khoản ở bên trái để tạo QR tự động."
             )
+
+# --- TAB 4: QUẢN LÝ NHÂN VIÊN ---
+with tab_staff:
+    st.subheader("👥 Quản lý Nhân viên & Phân quyền")
+    
+    # Check permissions
+    current_user = st.session_state.get("user", {})
+    is_admin = current_user.get("role") == UserRole.ADMIN
+    
+    if not is_admin:
+        st.error("⛔ Bạn không có quyền truy cập khu vực này. Chỉ Admin mới được quản lý nhân viên.")
+    else:
+        col_u_form, col_u_list = st.columns([1, 2], gap="medium")
+        
+        # --- STATE MANAGEMENT ---
+        if "edit_password_user" not in st.session_state:
+            st.session_state["edit_password_user"] = None
+            
+        edit_pass_user = st.session_state["edit_password_user"]
+        
+        # 1. Form Thêm/Sửa User HOẶC Đổi Mật Khẩu
+        with col_u_form:
+            with st.container(border=True):
+                # MODE 1: ĐỔI MẬT KHẨU
+                if edit_pass_user:
+                    st.subheader(f"🔐 Đổi mật khẩu: {edit_pass_user['username']}")
+                    st.caption("Admin có quyền đặt lại mật khẩu mới cho user này.")
+                    
+                    with st.form("frm_change_pass"):
+                        new_pass = st.text_input("Mật khẩu mới", type="password")
+                        confirm_pass = st.text_input("Nhập lại mật khẩu", type="password")
+                        
+                        if st.form_submit_button("Xác nhận đổi thay đổi", type="primary"):
+                            if not new_pass:
+                                st.error("Mật khẩu không được để trống!")
+                            elif new_pass != confirm_pass:
+                                st.error("Mật khẩu nhập lại không khớp!")
+                            else:
+                                update_user_password(edit_pass_user['username'], new_pass)
+                                st.toast(f"✅ Đã đổi mật khẩu cho {edit_pass_user['username']}!", icon="🔐")
+                                st.session_state["edit_password_user"] = None
+                                st.rerun()
+                                
+                    if st.button("❌ Hủy bỏ", use_container_width=True):
+                        st.session_state["edit_password_user"] = None
+                        st.rerun()
+
+                # MODE 2: THÊM / SỬA USER (Mặc định)
+                else:
+                    st.subheader("➕ Thêm Nhân viên")
+                    with st.form("frm_add_user"):
+                        u_name = st.text_input("Họ và Tên", placeholder="Nguyễn Văn A")
+                        u_email = st.text_input("Tên đăng nhập (Email)", placeholder="user@bamboo.com").strip()
+                        
+                        role_options = {
+                            UserRole.ADMIN: "Quản trị viên (Admin)",
+                            UserRole.MANAGER: "Quản lý (Manager)",
+                            UserRole.ACCOUNTANT: "Kế toán (Accountant)",
+                            UserRole.RECEPTIONIST: "Lễ tân (Receptionist)"
+                        }
+                        # Default Receptionist (index 3 of values)
+                        u_role = st.selectbox("Vai trò", options=list(role_options.keys()), format_func=lambda x: role_options[x], index=3)
+                        
+                        u_pass = st.text_input("Mật khẩu", type="password", placeholder="Để trống = Mặc định 123456")
+                        
+                        if st.form_submit_button("Lưu Nhân viên", type="primary"):
+                            if not u_email or not u_name:
+                                st.error("Vui lòng nhập Tên và Email!")
+                            else:
+                                # Check exist? simple check
+                                existing = get_all_users()
+                                is_exist = any(u['username'] == u_email for u in existing)
+                                
+                                raw_pass = u_pass if u_pass else "123456"
+                                
+                                new_user = User(
+                                    username=u_email,
+                                    password_hash=hash_password(raw_pass),
+                                    full_name=u_name,
+                                    role=u_role,
+                                    is_active=True
+                                )
+                                create_user(new_user.to_dict())
+                                msg = "Cập nhật" if is_exist else "Thêm mới"
+                                st.toast(f"✅ {msg} nhân viên {u_name}!", icon="🎉")
+                                st.rerun()
+
+        # 2. Danh sách User
+        with col_u_list:
+            st.subheader("📋 Danh sách Tài khoản")
+            users = get_all_users()
+            
+            if users:
+                # Sort by name
+                users.sort(key=lambda x: x.get("username", ""))
+                
+                # Header
+                try:
+                    # Use columns layout
+                    h1, h2, h3, h4, h5 = st.columns([1.5, 2, 1.5, 1, 1.5])
+                    h1.markdown("**Username**")
+                    h2.markdown("**Họ tên**")
+                    h3.markdown("**Vai trò**")
+                    h4.markdown("**TT**")
+                    h5.markdown("**Thao tác**")
+                    st.markdown('<hr style="margin: 5px 0; border-top: 1px solid #ddd;">', unsafe_allow_html=True)
+                    
+                    for u in users:
+                        with st.container():
+                            c1, c2, c3, c4, c5 = st.columns([1.5, 2, 1.5, 1, 1.5])
+                            c1.write(f"`{u['username']}`")
+                            c2.write(u.get('full_name', ''))
+                            
+                            r = u.get('role', 'receptionist')
+                            r_map = {
+                                "admin": "👑 Admin",
+                                "manager": "👔 Quản lý",
+                                "accountant": "💼 Kế toán",
+                                "receptionist": "🛎️ Lễ tân"
+                            }
+                            c3.write(r_map.get(r, r))
+                            
+                            is_act = u.get('is_active', True)
+                            c4.markdown("✅" if is_act else "❌")
+                            
+                            with c5:
+                                b_key, b_del = st.columns([1, 1], gap="small")
+                                
+                                # Nút đổi mật khẩu (Key Icon)
+                                if b_key.button("🔐", key=f"key_{u['username']}", help="Đổi mật khẩu"):
+                                    st.session_state["edit_password_user"] = u
+                                    st.rerun()
+                                    
+                                if b_del.button("🗑️", key=f"del_{u['username']}", help="Xóa tài khoản"):
+                                    # Prevent delete self
+                                    if u['username'] == current_user.get("username"):
+                                        st.toast("Không thể tự xóa chính mình!", icon="⚠️")
+                                    else:
+                                        delete_user(u['username'])
+                                        # Clear edit state if deleting the user being edited
+                                        if edit_pass_user and edit_pass_user['username'] == u['username']:
+                                            st.session_state["edit_password_user"] = None
+                                        st.rerun()
+                            st.markdown('<hr style="margin: 2px 0; border-top: 1px solid #eee;">', unsafe_allow_html=True)
+                except Exception as e:
+                    st.error(f"Lỗi hiển thị danh sách: {e}")
+            else:
+                st.info("Chưa có nhân viên nào. Hãy thêm ở cột bên trái.")

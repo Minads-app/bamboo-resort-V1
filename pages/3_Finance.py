@@ -6,6 +6,10 @@ from src.db import get_completed_bookings, get_all_rooms, get_all_room_types
 from src.ui import apply_sidebar_style, create_custom_sidebar_menu
 
 st.set_page_config(page_title="Báo cáo doanh thu", layout="wide")
+
+from src.ui import require_login
+require_login()
+
 apply_sidebar_style()
 create_custom_sidebar_menu()
 st.title("📊 Finance - Báo cáo doanh thu")

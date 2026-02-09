@@ -10,6 +10,9 @@ st.set_page_config(
     layout="wide"
 )
 
+from src.ui import require_login
+require_login()
+
 # Áp dụng CSS cho sidebar và tạo custom menu
 apply_sidebar_style()
 create_custom_sidebar_menu()

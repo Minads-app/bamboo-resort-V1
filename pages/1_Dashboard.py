@@ -12,6 +12,10 @@ from src.models import RoomStatus
 from src.ui import apply_sidebar_style, create_custom_sidebar_menu
 
 st.set_page_config(page_title="Sơ đồ phòng", layout="wide")
+
+from src.ui import require_login
+require_login()
+
 apply_sidebar_style()
 create_custom_sidebar_menu()
 

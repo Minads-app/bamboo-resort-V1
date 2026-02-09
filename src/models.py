@@ -127,3 +127,58 @@ class SystemConfig(BaseModel):
     def to_dict(self):
         try: return self.model_dump()
         except AttributeError: return self.dict()
+
+# --- 5. NGƯỜI DÙNG & PHÂN QUYỀN (AUTH) ---
+
+class UserRole(str, Enum):
+    ADMIN = "admin"             # Owner/Admin: Full quyền
+    MANAGER = "manager"         # Quản lý: Full quyền trừ Nhân viên & Cấu hình nhạy cảm
+    ACCOUNTANT = "accountant"   # Kế toán: Xem báo cáo, không sửa cấu hình
+    RECEPTIONIST = "receptionist" # Lễ tân: Check-in/out, không xem báo cáo/settings
+
+class User(BaseModel):
+    username: str             # Email hoặc Tên đăng nhập
+    password_hash: str        # Mật khẩu đã hash
+    full_name: str
+    role: UserRole = UserRole.RECEPTIONIST
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.now)
+
+    def to_dict(self):
+        try: return self.model_dump()
+        except AttributeError: return self.dict()
+
+# --- 6. DỊCH VỤ & ĂN UỐNG (SERVICES) ---
+
+class ServiceCategory(str, Enum):
+    FOOD = "Đồ ăn"
+    DRINK = "Đồ uống"
+    OTHER = "Dịch vụ" # Giặt ủi, Spa, Thuê xe...
+
+class ServiceItem(BaseModel):
+    id: Optional[str] = None
+    name: str
+    category: ServiceCategory = ServiceCategory.DRINK
+    price: float = 0.0
+    unit: str = "cái" # cái, ly, chai, đĩa, kg...
+    is_active: bool = True # Còn bán hay không
+
+    def to_dict(self):
+        try: return self.model_dump()
+        except AttributeError: return self.dict()
+
+class ServiceOrder(BaseModel):
+    id: Optional[str] = None
+    booking_id: str
+    room_id: str # Lưu thêm để query nhanh theo phòng
+    created_at: datetime = Field(default_factory=datetime.now)
+    
+    # Danh sách món order: [{ "id": "...", "name": "...", "price": 50, "qty": 2, "total": 100 }]
+    items: List[Dict] = Field(default_factory=list)
+    
+    total_value: float = 0.0
+    note: str = ""
+    
+    def to_dict(self):
+        try: return self.model_dump()
+        except AttributeError: return self.dict()
