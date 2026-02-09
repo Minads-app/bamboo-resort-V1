@@ -5,3 +5,5 @@ __pycache__/
 .env
 firebase_key.json
 .streamlit/secrets.toml
+venv/
+*.log
