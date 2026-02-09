@@ -18,21 +18,48 @@ def init_firebase():
             if os.path.exists("firebase_key.json"):
                 cred = credentials.Certificate("firebase_key.json")
                 firebase_admin.initialize_app(cred)
+                print("✅ Firebase initialized from firebase_key.json")
             # Ưu tiên 2: Streamlit Secrets (Cloud deployment)
             elif "firebase" in st.secrets:
                 # Convert st.secrets to a standard dict to avoid issues
                 key_dict = dict(st.secrets["firebase"])
                 
-                # Handle private_key newlines if they are escaped incorrectly
+                # Handle private_key newlines - support both formats
                 if "private_key" in key_dict:
+                    # Replace literal \n string with actual newline
                     key_dict["private_key"] = key_dict["private_key"].replace("\\n", "\n")
                     
                 cred = credentials.Certificate(key_dict)
                 firebase_admin.initialize_app(cred)
+                print("✅ Firebase initialized from Streamlit secrets")
             else:
-                st.error("⚠️ Lỗi: Không tìm thấy 'firebase_key.json' hoặc cấu hình secrets 'firebase'.")
+                error_msg = """
+                ⚠️ Firebase Configuration Missing!
+                
+                For Streamlit Cloud:
+                1. Go to App Settings > Secrets
+                2. Add your Firebase credentials in TOML format
+                3. Run 'python generate_secrets.py' locally to get the correct format
+                
+                For Local Development:
+                - Place 'firebase_key.json' in the project root
+                """
+                st.error(error_msg)
+                raise ValueError("Firebase credentials not found")
         except Exception as e:
-            st.error(f"Lỗi khởi tạo Firebase: {e}")
+            error_detail = f"""
+            ❌ Firebase Initialization Error
+            
+            Error: {str(e)}
+            
+            Common fixes:
+            - Check that private_key in secrets uses \\n (not actual newlines)
+            - Verify all required fields are present in secrets
+            - Ensure Firebase project has Firestore enabled
+            """
+            st.error(error_detail)
+            # Re-raise to prevent app from running with broken DB
+            raise
 
 @st.cache_resource
 def get_firebase_client():
