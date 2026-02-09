@@ -85,11 +85,11 @@ with tab_order:
                 
                 # Grid view for items
                 for item in filtered_menu:
-                    c1, c2, c3 = st.columns([3, 1.5, 1])
+                    c1, c2, c3 = st.columns([3, 1.5, 1], gap="small")
                     c1.markdown(f"**{item['name']}** ({item['unit']})")
                     c2.markdown(f"{item['price']:,.0f} đ")
                     
-                    if c3.button("➕ Thêm", key=f"add_{item['id']}"):
+                    if c3.button("➕", key=f"add_{item['id']}", help="Thêm vào giỏ"):
                         cart = st.session_state["cart"]
                         if item['id'] in cart:
                             cart[item['id']]['qty'] += 1
@@ -101,44 +101,44 @@ with tab_order:
                                 "qty": 1
                             }
                         st.toast(f"Đã thêm {item['name']}", icon="🛒")
-                        # No rerun needed to be faster, but cart display needs update.
-                        # We update cart display below.
-            
-            st.divider()
+                    
+                    st.divider() # Compact divider
             
             # 3. Giỏ hàng & Xác nhận
-            st.subheader("🛒 Giỏ hàng")
-            cart = st.session_state.get("cart", {})
-            
-            if not cart:
-                st.caption("Chưa chọn món nào.")
-            else:
-                total_order = 0
+            with st.container(border=True):
+                st.subheader("🛒 Giỏ hàng")
+                cart = st.session_state.get("cart", {})
                 
-                # Display cart items
-                for iid, data in cart.items():
-                    sub = data['price'] * data['qty']
-                    total_order += sub
+                if not cart:
+                    st.caption("Chưa chọn món nào.")
+                else:
+                    total_order = 0
                     
-                    cc1, cc2, cc3, cc4 = st.columns([3, 1, 1.5, 0.5])
-                    cc1.write(f"{data['name']}")
-                    
-                    # Qty adjuster
-                    new_qty = cc2.number_input(
-                        "SL", min_value=1, value=data['qty'], key=f"qty_{iid}", label_visibility="collapsed"
-                    )
-                    # Update qty if changed
-                    if new_qty != data['qty']:
-                        cart[iid]['qty'] = new_qty
-                        st.rerun()
+                    # Display cart items
+                    for iid, data in cart.items():
+                        sub = data['price'] * data['qty']
+                        total_order += sub
+                        
+                        cc1, cc2, cc3, cc4 = st.columns([3, 1.2, 1.5, 0.5], gap="small")
+                        cc1.write(f"{data['name']}")
+                        
+                        # Qty adjuster
+                        new_qty = cc2.number_input(
+                            "SL", min_value=1, value=data['qty'], key=f"qty_{iid}", label_visibility="collapsed"
+                        )
+                        # Update qty if changed
+                        if new_qty != data['qty']:
+                            cart[iid]['qty'] = new_qty
+                            st.rerun()
 
-                    cc3.write(f"{sub:,.0f}")
+                        cc3.write(f"{sub:,.0f}")
+                        
+                        if cc4.button("x", key=f"del_cart_{iid}"):
+                            del cart[iid]
+                            st.rerun()
                     
-                    if cc4.button("🗑️", key=f"del_cart_{iid}"):
-                        del cart[iid]
-                        st.rerun()
-                
-                st.markdown(f"### Tổng cộng: :red[{total_order:,.0f} VND]")
+                    st.divider()
+                    st.markdown(f"### Tổng: :red[{total_order:,.0f} đ]")
                 
                 note = st.text_input("Ghi chú (Không cay, ít đá...)", key="order_note")
                 

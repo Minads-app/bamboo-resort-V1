@@ -222,19 +222,20 @@ with col_stats:
 
 # --- 3. VẼ SƠ ĐỒ PHÒNG (GRID) ---
 if rooms:
-    # Custom CSS để hiển thị Card đẹp hơn
+    # Custom CSS để hiển thị Card đẹp hơn (Compact)
     st.markdown("""
     <style>
     .room-card {
-        padding: 10px;
-        border-radius: 8px;
+        padding: 4px;
+        border-radius: 6px;
         text-align: center;
-        margin-bottom: 10px;
+        margin-bottom: 6px;
         color: #333;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        font-size: 0.9em;
     }
-    .room-id { font-weight: bold; font-size: 1.2em; }
-    .room-type { font-size: 0.8em; color: #666; }
+    .room-id { font-weight: bold; font-size: 1.1em; }
+    .room-type { font-size: 0.75em; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     </style>
     """, unsafe_allow_html=True)
     
@@ -257,16 +258,16 @@ if rooms:
             
             # Hiển thị Header Khu vực (Compact layout)
             st.markdown(f"""
-            <div style="border-top: 1px solid #eee; margin-top: 8px; padding-top: 8px; margin-bottom: 8px;">
-                <h5 style="margin: 0; color: #333;">{area} ({len(area_rooms)} phòng)</h5>
+            <div style="border-top: 1px solid #eee; margin-top: 4px; padding-top: 4px; margin-bottom: 4px;">
+                <h6 style="margin: 0; color: #333; font-weight: bold;">{area} ({len(area_rooms)})</h6>
             </div>
             """, unsafe_allow_html=True)
             
-            # Chia lưới: 6 phòng 1 hàng
-            cols = st.columns(6)
+            # Chia lưới: 8 phòng 1 hàng (Compact hơn)
+            cols = st.columns(8)
             
             for i, room in enumerate(area_rooms):
-                col = cols[i % 6]
+                col = cols[i % 8]
                 with col:
                     status = room.get('status', RoomStatus.AVAILABLE)
                     icon, bg_color, border_style = get_status_style(status)
@@ -276,7 +277,7 @@ if rooms:
                     <div class="room-card" style="background-color: {bg_color}; {border_style}">
                         <div class="room-id">{room['id']}</div>
                         <div class="room-type">{type_map.get(room['room_type_code'], room['room_type_code'])}</div>
-                        <div style="margin-top: 5px;">{icon} {status}</div>
+                        <div style="margin-top: 2px;">{icon}</div>
                     </div>
                     """, unsafe_allow_html=True)
                     

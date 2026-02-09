@@ -93,13 +93,13 @@ def apply_sidebar_style():
     <style>
         /* Thay đổi màu nền của sidebar */
         [data-testid="stSidebar"] {
-            background-color: #3A6F43; /* Màu xanh đậm - bạn có thể đổi thành màu khác */
-            background-image: linear-gradient(180deg, #3A6F43 0%, #064232 100%); /* Gradient (tùy chọn) */
+            background-color: #3A6F43; /* Màu xanh đậm */
+            background-image: linear-gradient(180deg, #3A6F43 0%, #064232 100%);
         }
         
         /* Thay đổi màu chữ trong sidebar */
         [data-testid="stSidebar"] * {
-            color: #ffffff !important; /* Màu chữ trắng */
+            color: #ffffff !important;
         }
         
         /* Style cho các nút trong sidebar */
@@ -112,58 +112,81 @@ def apply_sidebar_style():
             color: #ffffff !important;
         }
         
-        /* Style cho header sidebar (nếu có) */
+        /* Style cho header sidebar */
         [data-testid="stSidebar"] h1,
         [data-testid="stSidebar"] h2,
         [data-testid="stSidebar"] h3 {
             color: #ffffff !important;
         }
+
+        /* --- TỐI ƯU KHOẢNG TRỐNG SIDEBAR --- */
+        /* Giảm padding phía trên cùng của sidebar */
+        section[data-testid="stSidebar"] > div {
+            padding-top: 2rem;
+        }
         
-        /* Ẩn menu mặc định của Streamlit để dùng custom menu */
+        /* Ẩn nút X tắt sidebar trên mobile nếu không cần thiết, hoặc chỉnh lại */
+        
+        /* Ẩn menu mặc định của Streamlit */
         [data-testid="stSidebarNav"] {
             display: none !important;
         }
         
-        /* Style cho custom menu buttons - chỉ áp dụng cho button trong sidebar */
+        /* Style cho custom menu buttons */
         [data-testid="stSidebar"] button[kind="secondary"] {
             background-color: rgba(255, 255, 255, 0.1) !important;
             border: 1px solid rgba(255, 255, 255, 0.2) !important;
             color: #ffffff !important;
             transition: all 0.3s ease;
-            margin-bottom: 3px !important;
+            margin-bottom: 2px !important; /* Giảm margin dưới */
             width: 100% !important;
-            padding-top: 6px !important;
-            padding-bottom: 6px !important;
-            border-radius: 8px !important;
-            font-size: 15px !important;
+            padding-top: 4px !important; /* Giảm padding nút */
+            padding-bottom: 4px !important;
+            border-radius: 6px !important;
+            font-size: 14px !important; /* Giảm fontsize nhẹ */
         }
         
-        /* Hover effect chỉ cho button, không cho markdown container */
         [data-testid="stSidebar"] button[kind="secondary"]:hover {
             background-color: rgba(255, 255, 255, 0.25) !important;
             border-color: rgba(255, 255, 255, 0.4) !important;
             transform: translateX(2px);
         }
         
-        /* Loại bỏ hover effect trên markdown container để tránh highlight sai vị trí */
         [data-testid="stSidebar"] [data-testid="stMarkdownContainer"]:hover {
             background-color: transparent !important;
         }
         
-        /* Đảm bảo không có khoảng cách thừa giữa các button */
         [data-testid="stSidebar"] .stButton {
-            margin-bottom: 4px !important;
+            margin-bottom: 2px !important;
         }
 
-        /* Style cho item đang active để cao rộng đều với button */
         [data-testid="stSidebar"] .menu-active-item {
             background-color: rgba(255, 255, 255, 0.22);
-            padding: 6px 12px;
-            border-radius: 8px;
-            margin-bottom: 4px;
+            padding: 5px 10px;
+            border-radius: 6px;
+            margin-bottom: 2px;
             text-align: center;
             border: 1px solid rgba(255, 255, 255, 0.3);
-            font-size: 15px;
+            font-size: 14px;
+        }
+        
+        /* --- TỐI ƯU KHOẢNG TRỐNG MAIN PAGE --- */
+        /* Giảm padding top của block container chính */
+        .block-container {
+            padding-top: 2rem !important;
+            padding-bottom: 2rem !important;
+        }
+        
+        /* Giảm khoảng cách giữa các element */
+        .element-container {
+            margin-bottom: 0.5rem !important;
+        }
+        
+        /* Header h1 gọn hơn */
+        h1 {
+            padding-top: 0rem !important;
+            padding-bottom: 0.5rem !important;
+            font-size: 2rem !important;
         }
     </style>
     """, unsafe_allow_html=True)
