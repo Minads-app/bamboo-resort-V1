@@ -4,7 +4,7 @@ import streamlit as st
 class AppConfig:
     # Resort Info
     # Load from environment variables (set by .env or cloud secrets)
-    RESORT_NAME = os.getenv("RESORT_NAME", "My Generic Resort")
+    RESORT_NAME = os.getenv("RESORT_NAME", "The Bamboo Resort")
     Page_Title = os.getenv("PAGE_TITLE", f"QUẢN LÝ {RESORT_NAME}")
     Page_Icon = os.getenv("PAGE_ICON", "🏨")
     
