@@ -44,7 +44,7 @@ def _fmt_dt(dt: datetime | None) -> str:
         return dt.strftime("%d/%m/%Y %H:%M")
     return ""
 
-def _render_bill_html(data: dict, auto_print: bool = False) -> str:
+def _render_bill_html(data: dict, auto_print: bool = False, print_format: str = "A5") -> str:
     # Escape các trường text tự do để tránh lỗi HTML
     note = escape(str(data.get("note", "") or ""))
     payment_method = escape(str(data.get("payment_method", "") or ""))
@@ -88,24 +88,55 @@ def _render_bill_html(data: dict, auto_print: bool = False) -> str:
             </div>
             """
 
+    # CSS Configuration based on Print Format
+    if print_format == "K80":
+        # Bill in nhiệt K80 (80mm) -> Content max-width ~72mm
+        page_style = """
+            @page { size: auto; margin: 0mm; }
+            body { 
+                font-family: 'Courier New', monospace; 
+                font-size: 11px; 
+                margin: 0; 
+                padding: 10px 5px; 
+                width: 72mm; /* Safe width for 80mm paper */
+            }
+            .bill { border: none; padding: 0; width: 100%; }
+            h2 { font-size: 14px; margin-bottom: 5px; }
+            .muted { font-size: 10px; margin-bottom: 8px; }
+            td { padding: 2px 0; border-bottom: 1px dashed #333; }
+            .line { margin: 5px 0; border-top: 1px dashed #000; }
+            .total { font-size: 14px; }
+        """
+    else:
+        # Bill A5 (148mm x 210mm) -> Content responsive but optimized for A5
+        page_style = """
+            @page { size: A5 portrait; margin: 10mm; }
+            body { font-family: Arial, sans-serif; padding: 16px; font-size: 13px; }
+            .bill { max-width: 100%; margin: 0 auto; border: 1px dashed #999; padding: 16px; border-radius: 10px; }
+            h2 { margin: 0 0 8px 0; text-align: center; }
+            .muted { color: #666; font-size: 12px; text-align: center; margin-bottom: 12px; }
+            table { width: 100%; border-collapse: collapse; }
+            td { padding: 6px 0; vertical-align: top; border-bottom: 1px solid #eee; }
+            .right { text-align: right; }
+            .line { border-top: 1px solid #ddd; margin: 10px 0; }
+            .total { font-size: 18px; font-weight: bold; }
+            
+            @media print {
+                body { padding: 0; }
+                .bill { border: none; padding: 0; }
+            }
+        """
+
     return f"""
     <html>
     <head>
       <meta charset="utf-8"/>
       <style>
-        body {{ font-family: Arial, sans-serif; padding: 16px; }}
-        .bill {{ max-width: 700px; margin: 0 auto; border: 1px dashed #999; padding: 16px; border-radius: 10px; }}
-        h2 {{ margin: 0 0 8px 0; text-align: center; }}
-        .muted {{ color: #666; font-size: 12px; text-align: center; margin-bottom: 12px; }}
+        {page_style}
+        /* Common Utils */
         table {{ width: 100%; border-collapse: collapse; }}
-        td {{ padding: 6px 0; vertical-align: top; }}
         .right {{ text-align: right; }}
-        .line {{ border-top: 1px solid #ddd; margin: 10px 0; }}
-        .total {{ font-size: 18px; font-weight: bold; }}
-        @media print {{
-          body {{ padding: 0; }}
-          .bill {{ border: none; }}
-        }}
+        .hide-print {{ display: none; }}
       </style>
     </head>
     <body>
@@ -129,7 +160,7 @@ def _render_bill_html(data: dict, auto_print: bool = False) -> str:
           {f'<tr><td>Giảm giá</td><td class="right">-{_money(data.get("discount",0))} đ</td></tr>' if data.get('discount', 0) > 0 else ''}
           <tr><td><b>Tổng cộng</b></td><td class="right"><b>{_money(data.get("total_gross",0))} đ</b></td></tr>
           <tr><td>Đã cọc</td><td class="right">-{_money(data.get("deposit",0))} đ</td></tr>
-          <tr><td class="total">Khách cần trả</td><td class="right total">{_money(data.get("final_payment",0))} đ</td></tr>
+          <tr><td class="total">Khách trả</td><td class="right total">{_money(data.get("final_payment",0))} đ</td></tr>
         </table>
 
         <div class="line"></div>
@@ -142,7 +173,7 @@ def _render_bill_html(data: dict, auto_print: bool = False) -> str:
         <div class="line"></div>
         {bank_block}
         {qr_block}
-        <div class="muted">Cảm ơn quý khách!</div>
+        <div class="muted">Cảm ơn quý khách!<br/>Hẹn gặp lại!</div>
       </div>
       {script}
     </body>
@@ -186,16 +217,21 @@ if st.session_state["checkout_success_data"]:
             unsafe_allow_html=True,
         )
 
+        # Lựa chọn khổ giấy in
+        print_fmt = st.radio("🖨️ Chọn khổ giấy in:", ["A5", "K80"], index=0, horizontal=True)
+
         b1, b2, b3 = st.columns([1, 1, 1])
-        if b1.button("🖨️ In bill", type="primary", use_container_width=True):
+        if b1.button("🖨️ In bill ngay", type="primary", use_container_width=True):
             st.session_state["checkout_print_now"] = True
+            st.session_state["checkout_print_fmt"] = print_fmt # Lưu lại khổ giấy đã chọn
             st.rerun()
 
-        html_bill = _render_bill_html(data, auto_print=False).encode("utf-8")
+        # Generate HTML based on selected format for download
+        html_bill = _render_bill_html(data, auto_print=False, print_format=print_fmt).encode("utf-8")
         b2.download_button(
-            "⬇️ Tải bill (HTML)",
+            f"⬇️ Tải bill ({print_fmt})",
             data=html_bill,
-            file_name=f"bill_{data.get('room_id','')}_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
+            file_name=f"bill_{data.get('room_id','')}_{datetime.now().strftime('%Y%m%d_%H%M')}_{print_fmt}.html",
             mime="text/html",
             use_container_width=True,
         )
@@ -204,10 +240,14 @@ if st.session_state["checkout_success_data"]:
             reset_page()
 
         # Nếu user bấm in: render HTML + auto print
-        if st.session_state["checkout_print_now"]:
+        if st.session_state.get("checkout_print_now"):
             st.session_state["checkout_print_now"] = False
+            # Lấy khổ giấy từ session (để đảm bảo giống lúc bấm nút) hoặc mặc định
+            p_fmt = st.session_state.get("checkout_print_fmt", "A5")
+            
             st.info("Nếu hộp thoại in không tự bật, hãy bấm Ctrl+P trong khung hóa đơn.")
-            components.html(_render_bill_html(data, auto_print=True), height=700, scrolling=True)
+            # Render iframe invoice
+            components.html(_render_bill_html(data, auto_print=True, print_format=p_fmt), height=600, scrolling=True)
 
     with c2:
         st.subheader("💡 Gợi ý")

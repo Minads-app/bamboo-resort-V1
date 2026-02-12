@@ -202,7 +202,7 @@ def get_status_style(status_str):
     elif status_str == RoomStatus.MAINTENANCE:
         return "🔧", "#f0f2f6", "border: 2px solid #9e9e9e;", "Bảo trì" # Xám (Bảo trì)
     elif status_str == RoomStatus.TEMP_LOCKED:
-        return "⏳", "#fffae6", "border: 2px solid #ffd700;", "Đang thao tác" # Vàng cam
+        return "⏳", "#fe84d8", "border: 2px solid #ff0000;", "Đang thao tác" # Vàng cam
     else:
         return "❓", "#ffffff", "border: 2px solid #ccc;", "Khác"
 
