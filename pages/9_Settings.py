@@ -46,288 +46,407 @@ tab_types, tab_special_days, tab_rooms, tab_system, tab_staff, tab_permissions =
 )
 
 # --- TAB 1: QUẢN LÝ LOẠI PHÒNG ---
-with tab_types:
-    col_input, col_list = st.columns([1, 1.5])
-    
-    # 1. Form nhập liệu (Bên trái)
-    with col_input:
-        with st.container(border=True):
-            # --- LOGIC EDIT ---
-            if "edit_room_type" not in st.session_state:
-                st.session_state["edit_room_type"] = None
-            
-            edit_data = st.session_state["edit_room_type"]
-            is_edit_mode = edit_data is not None
-            
-            form_title = f"✏️ Sửa Loại Phòng: {edit_data['type_code']}" if is_edit_mode else "➕ Thêm Loại Phòng Mới"
-            st.subheader(form_title)
 
-            # Giá trị mặc định
-            d_name = ""
-            d_code = ""
-            d_adults = 2
-            d_kids = 0
-            d_p_daily = 500000
-            d_p_overnight = 300000
-            d_h1 = 50000
-            d_h2 = 90000
-            d_h3 = 120000
-            d_h_next = 20000
-            d_en_hourly = True
-            d_en_overnight = True
-            d_en_daily = True
-            
-            if is_edit_mode:
-                d_name = edit_data.get('name', '')
-                d_code = edit_data.get('type_code', '')
-                d_adults = edit_data.get('default_adults', 2)
-                d_kids = edit_data.get('default_children', 0)
-                
-                pricing = edit_data.get('pricing', {})
-                d_p_daily = pricing.get('daily_price', 500000)
-                d_p_overnight = pricing.get('overnight_price', 300000)
-                
-                blocks = pricing.get('hourly_blocks', {})
-                d_h1 = blocks.get('1', 50000)
-                d_h2 = blocks.get('2', 90000)
-                d_h3 = blocks.get('3', 120000)
-                # Giả định block 4 = h3 + next
-                h4 = blocks.get('4', d_h3 + 20000)
-                d_h_next = h4 - d_h3 if h4 > d_h3 else 20000
-                
-                d_en_hourly = pricing.get('enable_hourly', True)
-                d_en_overnight = pricing.get('enable_overnight', True)
-                d_en_daily = pricing.get('enable_daily', True)
-            
-            with st.form("frm_room_type"):
-                c1, c2 = st.columns(2)
-                r_name = c1.text_input("Tên loại phòng", value=d_name, placeholder="VD: Phòng Đơn")
-                # Nếu đang Edt thì disable nhập mã
-                r_code = c2.text_input("Mã (ID)", value=d_code, placeholder="VD: STD", disabled=is_edit_mode).upper().strip()
-                
-                c3, c4 = st.columns(2)
-                r_adults = c3.number_input("Người lớn mặc định", 1, 10, d_adults)
-                r_kids = c4.number_input("Trẻ em mặc định", 0, 10, d_kids)
-                
-                st.markdown("---")
-                st.markdown("##### 💰 Thiết lập Giá (VND)")
+# --- Helper: Input giá tiền có dấu phân cách hàng nghìn ---
+import streamlit.components.v1 as components
 
-                # --- DATA PREPARATION ---
-                # Load existing data or defaults
-                p_norm = edit_data.get('pricing', {}) if is_edit_mode else {}
-                p_week = edit_data.get('pricing_weekend', {}) if is_edit_mode else {}
-                p_holi = edit_data.get('pricing_holiday', {}) if is_edit_mode else {}
+def price_input(label, value=0, key=None, container=None):
+    """Input giá VND với dấu phân cách hàng nghìn. Trả về int."""
+    target = container or st
+    display = f"{int(value):,}" if value else "0"
+    raw = target.text_input(label, value=display, key=key)
+    try:
+        clean = raw.replace(",", "").replace(".", "").replace(" ", "").strip()
+        return int(clean) if clean else 0
+    except (ValueError, TypeError):
+        return int(value) if value else 0
+
+# --- JS: Tự động format số khi đang nhập ---
+components.html("""
+<script>
+(function() {
+    const doc = window.parent.document;
+    let formatting = false;
+
+    function formatNum(n) {
+        return n.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
+    }
+
+    function handleInput(input) {
+        if (formatting) return;
+        const raw = input.value.replace(/[,\\s]/g, '');
+        if (!/^\\d*$/.test(raw) || raw === '') return;
+
+        const formatted = raw === '0' ? '0' : formatNum(raw.replace(/^0+/, '') || '0');
+        if (formatted === input.value) return;
+
+        const pos = input.selectionStart;
+        const oldLen = input.value.length;
+
+        formatting = true;
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(input, formatted);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+
+        const newLen = input.value.length;
+        const newPos = Math.max(0, pos + (newLen - oldLen));
+        input.setSelectionRange(newPos, newPos);
+        formatting = false;
+    }
+
+    function setup() {
+        doc.querySelectorAll('input[type="text"]').forEach(input => {
+            if (input.dataset.priceFmt) return;
+            // Chỉ format ô có nội dung là số thuần
+            const clean = input.value.replace(/[,\\s]/g, '');
+            if (!/^\\d+$/.test(clean)) return;
+
+            input.dataset.priceFmt = '1';
+            input.addEventListener('input', () => handleInput(input));
+            handleInput(input);
+        });
+    }
+
+    setInterval(setup, 800);
+    setup();
+})();
+</script>
+""", height=0)
+
+
+# --- Dialog thêm loại phòng mới ---
+@st.dialog("➕ Thêm Loại Phòng Mới", width="large")
+def dialog_add_room_type():
+    with st.form("frm_add_room_type"):
+        c1, c2 = st.columns(2)
+        r_name = c1.text_input("Tên loại phòng", placeholder="VD: Phòng Đơn")
+        r_code = c2.text_input("Mã (ID)", placeholder="VD: STD").upper().strip()
+        
+        c3, c4 = st.columns(2)
+        r_adults = c3.number_input("Người lớn mặc định", 1, 10, 2)
+        r_kids = c4.number_input("Trẻ em mặc định", 0, 10, 0)
+        
+        st.markdown("---")
+        st.markdown("##### 💰 Thiết lập Giá (VND)")
+        
+        # Header
+        hd1, hd2, hd3, hd4 = st.columns([1.5, 1, 1, 1])
+        hd1.markdown("**Hạng mục**")
+        hd2.markdown("**Ngày thường**")
+        hd3.markdown("**Cuối tuần**")
+        hd4.markdown("**Lễ/Tết**")
+        
+        # Giá ngày
+        st.markdown("###### 📅 1. Giá ngày (24h)")
+        c1, c2, c3 = st.columns(3)
+        d_n = price_input("Thường", 500000, "add_dn", c1)
+        d_w = price_input("C.tuần", 0, "add_dw", c2)
+        d_h = price_input("Lễ/Tết", 0, "add_dh", c3)
+        
+        # Qua đêm
+        st.markdown("---")
+        st.markdown("###### 🌙 2. Qua đêm")
+        c1, c2, c3 = st.columns(3)
+        o_n = price_input("Thường", 300000, "add_on", c1)
+        o_w = price_input("C.tuần", 0, "add_ow", c2)
+        o_h = price_input("Lễ/Tết", 0, "add_oh", c3)
+        
+        # Theo giờ
+        st.markdown("---")
+        st.markdown("###### ⏱️ 3. Theo giờ")
+        st.caption("1 giờ đầu")
+        c1, c2, c3 = st.columns(3)
+        h1_n = price_input("Thường", 50000, "add_h1n", c1)
+        h1_w = price_input("C.tuần", 0, "add_h1w", c2)
+        h1_h = price_input("Lễ/Tết", 0, "add_h1h", c3)
+        
+        # 2h
+        st.caption("2 giờ đầu")
+        c1, c2, c3 = st.columns(3)
+        h2_n = price_input("Thường", 90000, "add_h2n", c1)
+        h2_w = price_input("C.tuần", 0, "add_h2w", c2)
+        h2_h = price_input("Lễ/Tết", 0, "add_h2h", c3)
+        
+        # 3h
+        st.caption("3 giờ đầu")
+        c1, c2, c3 = st.columns(3)
+        h3_n = price_input("Thường", 120000, "add_h3n", c1)
+        h3_w = price_input("C.tuần", 0, "add_h3w", c2)
+        h3_h = price_input("Lễ/Tết", 0, "add_h3h", c3)
+        
+        # Mỗi giờ tiếp
+        st.caption("Mỗi giờ tiếp theo (+)")
+        c1, c2, c3 = st.columns(3)
+        hn_n = price_input("Thường (+)", 20000, "add_hnn", c1)
+        hn_w = price_input("C.tuần (+)", 0, "add_hnw", c2)
+        hn_h = price_input("Lễ/Tết (+)", 0, "add_hnh", c3)
+        
+        st.markdown("---")
+        st.markdown("**⚙️ Cho phép đặt**")
+        c1, c2, c3 = st.columns(3)
+        en_hourly = c1.checkbox("Theo giờ", value=True, key="add_eh")
+        en_overnight = c2.checkbox("Qua đêm", value=True, key="add_eo")
+        en_daily = c3.checkbox("Theo ngày", value=True, key="add_ed")
+        
+        submitted = st.form_submit_button("➕ Thêm Mới", type="primary", use_container_width=True)
+        
+        if submitted:
+            if not r_code or not r_name:
+                st.error("Vui lòng nhập Mã và Tên phòng!")
+            else:
+                def _build(d, o, h1, h2, h3, hn, en_h, en_o, en_d):
+                    return PriceConfig(
+                        daily_price=float(d), overnight_price=float(o),
+                        hourly_blocks={"1": h1, "2": h2, "3": h3, "4": h3 + hn},
+                        enable_hourly=en_h, enable_overnight=en_o, enable_daily=en_d
+                    )
                 
-                # Helpers to get default values for inputs
-                # Normal defaults to standard values if empty
-                def get_norm(key, default):
-                    return int(p_norm.get(key, default))
+                pc_main = _build(d_n, o_n, h1_n, h2_n, h3_n, hn_n, en_hourly, en_overnight, en_daily)
+                pc_week = _build(d_w, o_w, h1_w, h2_w, h3_w, hn_w, en_hourly, en_overnight, en_daily) if (d_w or o_w or h1_w) else None
+                pc_holi = _build(d_h, o_h, h1_h, h2_h, h3_h, hn_h, en_hourly, en_overnight, en_daily) if (d_h or o_h or h1_h) else None
                 
-                # Weekend/Holiday default to 0 if empty (implying "not set" or disabled)
-                def get_extra(data, key):
-                    return int(data.get(key, 0))
-
-                # Hourly helpers
-                def get_norm_block(h_key, default):
-                    blocks = p_norm.get('hourly_blocks', {})
-                    return int(blocks.get(h_key, default))
-
-                def get_extra_block(data, h_key):
-                    blocks = data.get('hourly_blocks', {})
-                    return int(blocks.get(h_key, 0))
-
-                # --- UI RENDERING ---
-                
-                # HEADERS for Columns (We'll repeat these or just set them once? User image implies headers above the inputs)
-                # But since we have multiple sections, let's make a grid helper.
-                
-                def render_price_row(label, field_key, default_norm, is_block=False, block_key=None):
-                    if label:
-                        st.markdown(f"**{label}**")
-                    c1, c2, c3 = st.columns(3)
-                    
-                    # Normal
-                    with c1:
-                        if is_block:
-                            val_n = get_norm_block(block_key, default_norm)
-                        else:
-                            val_n = get_norm(field_key, default_norm)
-                        v1 = st.number_input("Ngày thường", value=val_n, step=10000, key=f"n_{field_key}_{block_key}")
-
-                    # Weekend
-                    with c2:
-                        if is_block:
-                            val_w = get_extra_block(p_week, block_key)
-                        else:
-                            val_w = get_extra(p_week, field_key)
-                        v2 = st.number_input("Cuối tuần", value=val_w, step=10000, key=f"w_{field_key}_{block_key}")
-
-                    # Holiday
-                    with c3:
-                        if is_block:
-                            val_h = get_extra_block(p_holi, block_key)
-                        else:
-                            val_h = get_extra(p_holi, field_key)
-                        v3 = st.number_input("Lễ Tết", value=val_h, step=10000, key=f"h_{field_key}_{block_key}")
-                    
-                    return v1, v2, v3
-
-                # 1. GIÁ NGÀY
-                st.markdown("###### 1. Giá ngày (24h)")
-                d1, d2, d3 = render_price_row("", "daily_price", 500000)
-                
-                # 2. GIÁ QUA ĐÊM
-                st.markdown("###### 2. Qua đêm")
-                o1, o2, o3 = render_price_row("", "overnight_price", 300000)
-
-                # 3. THEO GIỜ
-                st.markdown("###### 3. Theo giờ")
-                
-                # 1 giờ
-                h1_n, h1_w, h1_h = render_price_row("1 giờ đầu", "hourly", 50000, True, "1")
-                # 2 giờ
-                h2_n, h2_w, h2_h = render_price_row("2 giờ đầu", "hourly", 90000, True, "2")
-                # 3 giờ
-                h3_n, h3_w, h3_h = render_price_row("3 giờ đầu", "hourly", 120000, True, "3")
-                
-                # Next hour
-                # Note: Hourly blocks usually need specific logic for the "next" hour calculation if stored differently
-                # In current logic, Block 4 is calculated.
-                # Let's ask user for "Mỗi giờ tiếp theo".
-                # To simplify, we store this as a separate variable or calc Block 4?
-                # Logic cũ: h_next = h4 - h3.
-                # Let's retrieve h_next from existing data.
-                def get_next_val(data, h3_val):
-                    blocks = data.get('hourly_blocks', {})
-                    if '4' in blocks and '3' in blocks:
-                        diff = int(blocks['4']) - int(blocks['3'])
-                        return diff if diff > 0 else 20000
-                    return 20000
-                
-                next_n = get_next_val(p_norm, get_norm_block("3", 120000))
-                next_w = get_next_val(p_week, get_extra_block(p_week, "3"))
-                next_h = get_next_val(p_holi, get_extra_block(p_holi, "3"))
-
-                st.markdown("**Mỗi giờ tiếp theo (+)**")
-                c_nx1, c_nx2, c_nx3 = st.columns(3)
-                hn_result = c_nx1.number_input("Ngày thường (+)", value=next_n, step=5000, key="nx_n")
-                hw_result = c_nx2.number_input("Cuối tuần (+)", value=next_w, step=5000, key="nx_w")
-                hh_result = c_nx3.number_input("Lễ Tết (+)", value=next_h, step=5000, key="nx_h")
-
-                st.markdown("---")
-                st.markdown("**⚙️ Cấu hình được phép đặt**")
-                c_en1, c_en2, c_en3 = st.columns(3)
-                en_hourly = c_en1.checkbox("Cho phép theo giờ", value=d_en_hourly)
-                en_overnight = c_en2.checkbox("Cho phép qua đêm", value=d_en_overnight)
-                en_daily = c_en3.checkbox("Cho phép theo ngày", value=d_en_daily)
-
-                btn_label = "💾 Cập nhật" if is_edit_mode else "➕ Thêm Mới"
-                submitted = st.form_submit_button(btn_label, type="primary", use_container_width=True)
-                
-                if submitted:
-                    if not r_code or not r_name:
-                        st.error("Vui lòng nhập Mã và Tên phòng!")
-                    else:
-                        # Construct Pricing Objects Helper
-                        def build_price_config(d, o, h1, h2, h3, h_next, enable_h=True, enable_o=True, enable_d=True):
-                            blocks = {
-                                "1": h1, "2": h2, "3": h3,
-                                "4": h3 + h_next
-                            }
-                            return PriceConfig(
-                                hourly_blocks=blocks,
-                                daily_price=float(d),
-                                overnight_price=float(o),
-                                enable_hourly=enable_h,
-                                enable_overnight=enable_o,
-                                enable_daily=enable_d
-                            )
-
-                        pricing_main = build_price_config(d1, o1, h1_n, h2_n, h3_n, hn_result, en_hourly, en_overnight, en_daily)
-                        # Fallback for main: Must not be None? Actually code expects main pricing.
-                        # If user enters 0 for main, it might be an issue, but let's assume they enter valid data.
-                        
-                        # Weekend and Holiday pricing inherit the enable flags from main pricing
-                        pricing_weekend_obj = build_price_config(d2, o2, h1_w, h2_w, h3_w, hw_result, en_hourly, en_overnight, en_daily) if (d2 or o2 or h1_w) else None
-                        pricing_holiday_obj = build_price_config(d3, o3, h1_h, h2_h, h3_h, hh_result, en_hourly, en_overnight, en_daily) if (d3 or o3 or h1_h) else None
-                        
-                        new_type = RoomType(
-                            type_code=r_code,
-                            name=r_name,
-                            default_adults=r_adults,
-                            default_children=r_kids,
-                            pricing=pricing_main,
-                            pricing_weekend=pricing_weekend_obj,
-                            pricing_holiday=pricing_holiday_obj
-                        )
-                        
-                        try:
-                            # Chuyển đổi thành dict, xử lý exclude_none=True để không lưu null fields nếu muốn
-                            # Nhưng hàm save_room_type_to_db nhận dict thuần
-                            save_room_type_to_db(new_type.to_dict())
-                            action = "Cập nhật" if is_edit_mode else "Thêm mới"
-                            st.toast(f"✅ {action}: {r_name} thành công!", icon="🎉")
-                            
-                            # Reset edit state
-                            st.session_state["edit_room_type"] = None
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Lỗi khi lưu vào Firestore: {e}")
-            
-            # Nút Hủy Edit (nằm ngoài form)
-            if is_edit_mode:
-                if st.button("❌ Hủy bỏ thay đổi", use_container_width=True):
-                    st.session_state["edit_room_type"] = None
+                new_type = RoomType(
+                    type_code=r_code, name=r_name,
+                    default_adults=r_adults, default_children=r_kids,
+                    pricing=pc_main, pricing_weekend=pc_week, pricing_holiday=pc_holi
+                )
+                try:
+                    save_room_type_to_db(new_type.to_dict())
+                    st.toast(f"✅ Thêm mới {r_name} thành công!", icon="🎉")
                     st.rerun()
+                except Exception as e:
+                    st.error(f"Lỗi: {e}")
 
-    # 2. Danh sách hiển thị (Bên phải)
-    with col_list:
-        st.subheader("📋 Danh sách Loại phòng")
-        
-        # Lấy dữ liệu từ Firestore
-        room_types_data = get_all_room_types()
-        
-        if room_types_data:
-            for item in room_types_data:
-                pricing = item.get('pricing', {})
+with tab_types:
+    # Nút thêm mới (mở dialog)
+    if st.button("➕ Thêm Loại Phòng Mới", type="primary", use_container_width=False):
+        dialog_add_room_type()
+    
+    st.markdown("---")
+    
+    # --- Danh sách hiển thị (Full width) ---
+    st.subheader("📋 Danh sách Loại phòng")
+    
+    room_types_data = get_all_room_types()
+    
+    # Session state cho inline edit
+    if "inline_edit_type" not in st.session_state:
+        st.session_state["inline_edit_type"] = None
+    
+    if room_types_data:
+        for item in room_types_data:
+            tc = item['type_code']
+            pricing = item.get('pricing', {})
+            p_weekend = item.get('pricing_weekend') or {}
+            p_holiday = item.get('pricing_holiday') or {}
+            blocks = pricing.get('hourly_blocks', {})
+            blocks_w = p_weekend.get('hourly_blocks', {}) if p_weekend else {}
+            blocks_h = p_holiday.get('hourly_blocks', {}) if p_holiday else {}
+            
+            is_inline_edit = (st.session_state["inline_edit_type"] == tc)
+            
+            with st.expander(f"**{item['name']} ({tc})** - {pricing.get('daily_price', 0):,.0f} đ/ngày", expanded=is_inline_edit):
                 
-                # Tạo Card hiển thị thông tin
-                with st.expander(f"**{item['name']} ({item['type_code']})** - {pricing.get('daily_price', 0):,} đ/ngày"):
-                    c_info, c_price = st.columns(2)
-                    
-                    with c_info:
-                        st.write(f"👤 Người lớn: **{item['default_adults']}**")
-                        st.write(f"👶 Trẻ em: **{item['default_children']}**")
+                if is_inline_edit:
+                    # ========== CHẾ ĐỘ SỬA INLINE ==========
+                    with st.form(f"frm_inline_{tc}"):
+                        st.markdown("##### ✏️ Đang chỉnh sửa")
                         
-                        modes = []
-                        if pricing.get('enable_hourly', True): modes.append("Giờ")
-                        if pricing.get('enable_overnight', True): modes.append("Qua đêm")
-                        if pricing.get('enable_daily', True): modes.append("Ngày")
-                        st.caption(f"Cho phép: {', '.join(modes)}")
+                        c1, c2 = st.columns(2)
+                        e_name = c1.text_input("Tên loại phòng", value=item.get('name', ''), key=f"ie_name_{tc}")
+                        c2.text_input("Mã (ID)", value=tc, disabled=True, key=f"ie_code_{tc}")
+                        
+                        c3, c4 = st.columns(2)
+                        e_adults = c3.number_input("Người lớn", 1, 10, item.get('default_adults', 2), key=f"ie_adults_{tc}")
+                        e_kids = c4.number_input("Trẻ em", 0, 10, item.get('default_children', 0), key=f"ie_kids_{tc}")
+                        
+                        st.markdown("---")
+                        
+                        def _v(d, key, default=0):
+                            return int(d.get(key, default))
+                        def _b(blk, key, default=0):
+                            return int(blk.get(key, default))
+                        def _next(blk):
+                            if blk.get('4') and blk.get('3'):
+                                d = int(blk['4']) - int(blk['3'])
+                                return d if d > 0 else 20000
+                            return 20000
+                        
+                        hd1, hd2, hd3, hd4 = st.columns([1.5, 1, 1, 1])
+                        hd1.markdown("**Hạng mục**")
+                        hd2.markdown("**Ngày thường**")
+                        hd3.markdown("**Cuối tuần**")
+                        hd4.markdown("**Lễ/Tết**")
+                        
+                        st.markdown("###### 📅 1. Giá ngày (24h)")
+                        c1, c2, c3 = st.columns(3)
+                        e_d_n = price_input("Thường", _v(pricing, 'daily_price', 500000), f"ie_dn_{tc}", c1)
+                        e_d_w = price_input("C.tuần", _v(p_weekend, 'daily_price'), f"ie_dw_{tc}", c2)
+                        e_d_h = price_input("Lễ/Tết", _v(p_holiday, 'daily_price'), f"ie_dh_{tc}", c3)
+                        
+                        st.markdown("---")
+                        st.markdown("###### 🌙 2. Qua đêm")
+                        c1, c2, c3 = st.columns(3)
+                        e_o_n = price_input("Thường", _v(pricing, 'overnight_price', 300000), f"ie_on_{tc}", c1)
+                        e_o_w = price_input("C.tuần", _v(p_weekend, 'overnight_price'), f"ie_ow_{tc}", c2)
+                        e_o_h = price_input("Lễ/Tết", _v(p_holiday, 'overnight_price'), f"ie_oh_{tc}", c3)
+                        
+                        st.markdown("---")
+                        st.markdown("###### ⏱️ 3. Theo giờ")
+                        st.caption("1 giờ đầu")
+                        c1, c2, c3 = st.columns(3)
+                        e_h1_n = price_input("Thường", _b(blocks, '1', 50000), f"ie_h1n_{tc}", c1)
+                        e_h1_w = price_input("C.tuần", _b(blocks_w, '1'), f"ie_h1w_{tc}", c2)
+                        e_h1_h = price_input("Lễ/Tết", _b(blocks_h, '1'), f"ie_h1h_{tc}", c3)
+                        
+                        st.caption("2 giờ đầu")
+                        c1, c2, c3 = st.columns(3)
+                        e_h2_n = price_input("Thường", _b(blocks, '2', 90000), f"ie_h2n_{tc}", c1)
+                        e_h2_w = price_input("C.tuần", _b(blocks_w, '2'), f"ie_h2w_{tc}", c2)
+                        e_h2_h = price_input("Lễ/Tết", _b(blocks_h, '2'), f"ie_h2h_{tc}", c3)
+                        
+                        st.caption("3 giờ đầu")
+                        c1, c2, c3 = st.columns(3)
+                        e_h3_n = price_input("Thường", _b(blocks, '3', 120000), f"ie_h3n_{tc}", c1)
+                        e_h3_w = price_input("C.tuần", _b(blocks_w, '3'), f"ie_h3w_{tc}", c2)
+                        e_h3_h = price_input("Lễ/Tết", _b(blocks_h, '3'), f"ie_h3h_{tc}", c3)
+                        
+                        st.caption("Mỗi giờ tiếp theo (+)")
+                        c1, c2, c3 = st.columns(3)
+                        e_hn_n = price_input("Thường (+)", _next(blocks), f"ie_hnn_{tc}", c1)
+                        e_hn_w = price_input("C.tuần (+)", _next(blocks_w) if blocks_w else 20000, f"ie_hnw_{tc}", c2)
+                        e_hn_h = price_input("Lễ/Tết (+)", _next(blocks_h) if blocks_h else 20000, f"ie_hnh_{tc}", c3)
+                        
+                        st.markdown("---")
+                        st.markdown("**⚙️ Cho phép đặt**")
+                        c1, c2, c3 = st.columns(3)
+                        e_en_hourly = c1.checkbox("Theo giờ", value=pricing.get('enable_hourly', True), key=f"ie_eh_{tc}")
+                        e_en_overnight = c2.checkbox("Qua đêm", value=pricing.get('enable_overnight', True), key=f"ie_eo_{tc}")
+                        e_en_daily = c3.checkbox("Theo ngày", value=pricing.get('enable_daily', True), key=f"ie_ed_{tc}")
+                        
+                        st.markdown("---")
+                        c_save, c_cancel = st.columns(2)
+                        btn_save = c_save.form_submit_button("💾 Lưu thay đổi", type="primary", use_container_width=True)
+                        btn_cancel = c_cancel.form_submit_button("❌ Hủy", use_container_width=True)
+                        
+                        if btn_save:
+                            def _build_pc(d, o, h1, h2, h3, hn, en_h, en_o, en_d):
+                                return PriceConfig(
+                                    daily_price=float(d), overnight_price=float(o),
+                                    hourly_blocks={"1": h1, "2": h2, "3": h3, "4": h3 + hn},
+                                    enable_hourly=en_h, enable_overnight=en_o, enable_daily=en_d
+                                )
+                            
+                            pc_main = _build_pc(e_d_n, e_o_n, e_h1_n, e_h2_n, e_h3_n, e_hn_n, e_en_hourly, e_en_overnight, e_en_daily)
+                            pc_week = _build_pc(e_d_w, e_o_w, e_h1_w, e_h2_w, e_h3_w, e_hn_w, e_en_hourly, e_en_overnight, e_en_daily) if (e_d_w or e_o_w or e_h1_w) else None
+                            pc_holi = _build_pc(e_d_h, e_o_h, e_h1_h, e_h2_h, e_h3_h, e_hn_h, e_en_hourly, e_en_overnight, e_en_daily) if (e_d_h or e_o_h or e_h1_h) else None
+                            
+                            updated = RoomType(
+                                type_code=tc, name=e_name,
+                                default_adults=e_adults, default_children=e_kids,
+                                pricing=pc_main, pricing_weekend=pc_week, pricing_holiday=pc_holi
+                            )
+                            try:
+                                save_room_type_to_db(updated.to_dict())
+                                st.toast(f"✅ Đã cập nhật {e_name}!", icon="🎉")
+                                st.session_state["inline_edit_type"] = None
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Lỗi: {e}")
+                        
+                        if btn_cancel:
+                            st.session_state["inline_edit_type"] = None
+                            st.rerun()
+                
+                else:
+                    # ========== CHẾ ĐỘ XEM ==========
+                    c_info1, c_info2 = st.columns(2)
+                    c_info1.write(f"👤 Người lớn: **{item.get('default_adults', 2)}**")
+                    c_info2.write(f"👶 Trẻ em: **{item.get('default_children', 0)}**")
                     
-                    with c_price:
-                        st.write(f"🌙 Qua đêm: **{pricing.get('overnight_price', 0):,} đ**")
-                        # Hiển thị giá giờ dạng chuỗi cho gọn
-                        blocks = pricing.get('hourly_blocks', {})
-                        st.write(f"⏱️ 1h: {blocks.get('1', 0):,} | 2h: {blocks.get('2', 0):,}")
+                    modes = []
+                    if pricing.get('enable_hourly', True): modes.append("Giờ")
+                    if pricing.get('enable_overnight', True): modes.append("Qua đêm")
+                    if pricing.get('enable_daily', True): modes.append("Ngày")
+                    st.caption(f"✅ Cho phép: **{', '.join(modes)}**")
+                    
+                    st.markdown("---")
+                    
+                    def fmt(val):
+                        if not val: return "-"
+                        return f"{float(val):,.0f}"
+                    
+                    hd1, hd2, hd3, hd4 = st.columns([1.5, 1, 1, 1])
+                    hd1.markdown("**Hạng mục**")
+                    hd2.markdown("**Ngày thường**")
+                    hd3.markdown("**Cuối tuần**")
+                    hd4.markdown("**Lễ/Tết**")
+                    
+                    r1, r2, r3, r4 = st.columns([1.5, 1, 1, 1])
+                    r1.write("📅 Giá ngày (24h)")
+                    r2.write(f"**{fmt(pricing.get('daily_price'))}**")
+                    r3.write(fmt(p_weekend.get('daily_price')))
+                    r4.write(fmt(p_holiday.get('daily_price')))
+                    
+                    r1, r2, r3, r4 = st.columns([1.5, 1, 1, 1])
+                    r1.write("🌙 Qua đêm")
+                    r2.write(f"**{fmt(pricing.get('overnight_price'))}**")
+                    r3.write(fmt(p_weekend.get('overnight_price')))
+                    r4.write(fmt(p_holiday.get('overnight_price')))
+                    
+                    r1, r2, r3, r4 = st.columns([1.5, 1, 1, 1])
+                    r1.write("⏱️ 1 giờ đầu")
+                    r2.write(f"**{fmt(blocks.get('1'))}**")
+                    r3.write(fmt(blocks_w.get('1')))
+                    r4.write(fmt(blocks_h.get('1')))
 
-                    st.write(f"⏱️ 1h: {blocks.get('1', 0):,} | 2h: {blocks.get('2', 0):,}")
- 
-                    # Nút Sửa & Xóa
+                    r1, r2, r3, r4 = st.columns([1.5, 1, 1, 1])
+                    r1.write("⏱️ 2 giờ đầu")
+                    r2.write(f"**{fmt(blocks.get('2'))}**")
+                    r3.write(fmt(blocks_w.get('2')))
+                    r4.write(fmt(blocks_h.get('2')))
+                    
+                    r1, r2, r3, r4 = st.columns([1.5, 1, 1, 1])
+                    r1.write("⏱️ 3 giờ đầu")
+                    r2.write(f"**{fmt(blocks.get('3'))}**")
+                    r3.write(fmt(blocks_w.get('3')))
+                    r4.write(fmt(blocks_h.get('3')))
+                    
+                    def calc_next(blk):
+                        if blk.get('4') and blk.get('3'):
+                            diff = float(blk['4']) - float(blk['3'])
+                            return diff if diff > 0 else 0
+                        return 0
+                    r1, r2, r3, r4 = st.columns([1.5, 1, 1, 1])
+                    r1.write("⏱️ Mỗi giờ tiếp (+)")
+                    r2.write(f"**{fmt(calc_next(blocks))}**")
+                    r3.write(fmt(calc_next(blocks_w)))
+                    r4.write(fmt(calc_next(blocks_h)))
+                    
+                    extra_adult = pricing.get('extra_adult_surcharge', 0)
+                    extra_child = pricing.get('extra_child_surcharge', 0)
+                    if extra_adult or extra_child:
+                        st.markdown("---")
+                        st.caption("💰 Phụ thu")
+                        r1, r2 = st.columns(2)
+                        r1.write(f"Người lớn thêm: **{fmt(extra_adult)}** đ")
+                        r2.write(f"Trẻ em thêm: **{fmt(extra_child)}** đ")
+
+                    st.markdown("---")
                     c_edit, c_del = st.columns([1, 1])
                     with c_edit:
-                         if st.button("✏️ Sửa", key=f"edit_{item['type_code']}", use_container_width=True):
-                             st.session_state["edit_room_type"] = item
+                         if st.button("✏️ Sửa", key=f"edit_{tc}", use_container_width=True):
+                             st.session_state["inline_edit_type"] = tc
                              st.rerun()
                     
                     with c_del:
-                        if st.button("🗑️ Xóa", key=f"del_{item['type_code']}", use_container_width=True):
-                            delete_room_type(item['type_code'])
-                            if st.session_state.get("edit_room_type", {}).get("type_code") == item['type_code']:
-                                st.session_state["edit_room_type"] = None
+                        if st.button("🗑️ Xóa", key=f"del_{tc}", use_container_width=True):
+                            delete_room_type(tc)
+                            if st.session_state.get("inline_edit_type") == tc:
+                                st.session_state["inline_edit_type"] = None
                             st.rerun()
-        else:
-            st.info("Chưa có loại phòng nào. Hãy thêm ở cột bên trái.")
+    else:
+        st.info("Chưa có loại phòng nào. Hãy bấm nút '➕ Thêm Loại Phòng Mới' ở trên.")
 
         # --- TAB 2: CẤU HÌNH NGÀY LỄ/TẾT & CUỐI TUẦN ---
 with tab_special_days:
