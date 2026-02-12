@@ -3,11 +3,19 @@ Helper script to convert firebase_key.json to Streamlit secrets format
 Run this script to generate the secrets content for Streamlit Cloud
 """
 import json
+import os
 
 def convert_firebase_key_to_secrets():
     """Read firebase_key.json and output secrets.toml format"""
     try:
-        with open('firebase_key.json', 'r', encoding='utf-8') as f:
+        # Check config dir first
+        config_path = 'config/firebase_key.json'
+        # Fallback to root (legacy) if not found in config, but warn?
+        # Actually just check config first as per plan.
+        if not os.path.exists(config_path) and os.path.exists('firebase_key.json'):
+             config_path = 'firebase_key.json'
+             
+        with open(config_path, 'r', encoding='utf-8') as f:
             firebase_data = json.load(f)
         
         print("=" * 60)

@@ -4,6 +4,9 @@ __pycache__/
 .DS_Store
 .env
 firebase_key.json
+config/*.json
+!config/placeholder.json
 .streamlit/secrets.toml
 venv/
 *.log
+run_resort.bat

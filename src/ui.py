@@ -2,7 +2,7 @@
 UI Helper Functions - CSS và styling chung cho toàn bộ app
 """
 import streamlit as st
-from src.db import authenticate_user, get_all_users, create_user, hash_password, create_user_session, verify_user_session, delete_user_session
+from src.db import authenticate_user, get_all_users, create_user, hash_password, create_user_session, verify_user_session, delete_user_session, get_db
 from src.models import User, UserRole
 import time
 import os
@@ -26,13 +26,18 @@ def load_custom_css():
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 def init_default_admin():
+
     """Tạo tài khoản Admin mặc định nếu hệ thống chưa có user nào"""
     # Chỉ chạy 1 lần check
     if "admin_checked" in st.session_state:
         return
 
-    users = get_all_users()
-    if not users:
+    db = get_db()
+    # Check emptiness by getting just 1 doc
+    docs = db.collection("users").limit(1).stream()
+    has_user = any(docs)
+    
+    if not has_user:
         # Create default admin
         default_admin = User(
             username="admin",
@@ -104,6 +109,8 @@ def login_form(cookie_manager=None):
                     st.error(f"Sai tên đăng nhập hoặc mật khẩu! ({username})")
 
 def require_login():
+
+
     """
     Hàm bắt buộc đăng nhập. Đặt ở đầu mỗi trang.
     Nếu chưa login -> Hiện form login -> Chặn render nội dung bằng st.stop()

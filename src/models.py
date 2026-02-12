@@ -117,8 +117,10 @@ class Booking(BaseModel):
 
 # --- 4. CẤU HÌNH HỆ THỐNG (SYSTEM CONFIG) ---
 
+from src.config import AppConfig
+
 class SystemConfig(BaseModel):
-    hotel_name: str = "The Bamboo Resort"
+    hotel_name: str = AppConfig.RESORT_NAME
     address: str = ""
     phone: str = ""
     email: str = ""

@@ -12,6 +12,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+
+
 from src.ui import require_login
 require_login()
 
@@ -21,6 +23,7 @@ apply_sidebar_style()
 create_custom_sidebar_menu()
 
 st.markdown(f"<h1 style='text-align: center; margin-bottom: 5px;'>{AppConfig.Page_Icon} {AppConfig.Page_Title}</h1>", unsafe_allow_html=True)
+
 
 # --- 1. THỐNG KÊ NHANH ---
 rooms = get_all_rooms()

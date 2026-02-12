@@ -2,11 +2,16 @@ import json
 import os
 
 try:
-    if not os.path.exists("firebase_key.json"):
-        print("Lỗi: Không tìm thấy file 'firebase_key.json'.")
-        exit(1)
+    config_path = "config/firebase_key.json"
+    if not os.path.exists(config_path):
+        # Fallback check
+        if os.path.exists("firebase_key.json"):
+            config_path = "firebase_key.json"
+        else:
+            print("Lỗi: Không tìm thấy file 'firebase_key.json' trong thư mục gốc hoặc thư mục config/.")
+            exit(1)
 
-    with open("firebase_key.json", "r", encoding="utf-8") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     print("\n" + "="*50)

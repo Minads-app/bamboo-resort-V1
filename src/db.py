@@ -148,23 +148,25 @@ def get_all_rooms():
         # Kiểm tra Lazy Release cho TEMP_LOCKED
         if r.get("status") == RoomStatus.TEMP_LOCKED:
             locked_until = r.get("locked_until")
-            # Convert timestamp to datetime if needed
-            if locked_until and locked_until.tzinfo:
-                locked_until = locked_until.replace(tzinfo=None)
-                
-            if locked_until and locked_until < now:
-                # Đã hết hạn giữ -> Release về AVAILABLE
-                ref = db.collection("rooms").document(r["id"])
-                batch.update(ref, {
-                    "status": RoomStatus.AVAILABLE,
-                    "locked_until": firestore.DELETE_FIELD,
-                    "locked_by": firestore.DELETE_FIELD
-                })
-                needs_commit = True
-                # Update local data for return
-                r["status"] = RoomStatus.AVAILABLE.value
-                r.pop("locked_until", None)
-                r.pop("locked_by", None)
+            if locked_until:
+                # Fix Timezone Issue: Firestore returns UTC, 'now' is Local.
+                if locked_until.tzinfo:
+                    locked_until = locked_until.astimezone()
+                    locked_until = locked_until.replace(tzinfo=None)
+
+                if locked_until < now:
+                    # Đã hết hạn giữ -> Release về AVAILABLE
+                    ref = db.collection("rooms").document(r["id"])
+                    batch.update(ref, {
+                        "status": RoomStatus.AVAILABLE,
+                        "locked_until": firestore.DELETE_FIELD,
+                        "locked_by": firestore.DELETE_FIELD
+                    })
+                    needs_commit = True
+                    # Update local data for return
+                    r["status"] = RoomStatus.AVAILABLE.value
+                    r.pop("locked_until", None)
+                    r.pop("locked_by", None)
 
         rooms.append(r)
     

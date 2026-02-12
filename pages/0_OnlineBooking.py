@@ -11,6 +11,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
+from src.config import AppConfig # Import Config
 from src.db import (
     get_all_rooms,
     get_all_room_types,
@@ -36,7 +37,7 @@ if "user_session_id" not in st.session_state:
     import uuid
     st.session_state["user_session_id"] = str(uuid.uuid4())
 
-st.title("🌐 Đặt phòng Online - The Bamboo Resort")
+st.title(f"🌐 Đặt phòng Online - {AppConfig.RESORT_NAME}")
 st.caption(
     "Khách tự đặt phòng, chuyển khoản và gửi hình chụp thanh toán. Lễ tân sẽ kiểm tra và xác nhận đặt cọc."
 )

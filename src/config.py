@@ -3,11 +3,14 @@ import streamlit as st
 
 class AppConfig:
     # Resort Info
-    RESORT_NAME = os.getenv("RESORT_NAME", "The Bamboo Resort")
-    Page_Title = os.getenv("PAGE_TITLE", f"QUẢN LÝ KHÁCH SẠN {RESORT_NAME}")
-    Page_Icon = os.getenv("PAGE_ICON", "🎋")
+    # Load from environment variables (set by .env or cloud secrets)
+    RESORT_NAME = os.getenv("RESORT_NAME", "My Generic Resort")
+    Page_Title = os.getenv("PAGE_TITLE", f"QUẢN LÝ {RESORT_NAME}")
+    Page_Icon = os.getenv("PAGE_ICON", "🏨")
     
     # Firebase
+    # Default to a generic name slightly different from specific "bamboo" to avoid confusion, 
+    # but keep backward compatibility if file exists in config/
     FIREBASE_KEY_PATH = os.getenv("FIREBASE_KEY_PATH", "config/firebase_key.json")
     
     # Paths

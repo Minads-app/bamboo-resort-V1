@@ -12,6 +12,7 @@ from src.db import (
 )
 from src.models import RoomStatus, Permission
 from src.ui import apply_sidebar_style, create_custom_sidebar_menu, require_login, require_permission
+from src.config import AppConfig
 
 st.set_page_config(page_title="Sơ đồ phòng", layout="wide")
 
@@ -21,7 +22,7 @@ require_permission(Permission.VIEW_DASHBOARD)
 apply_sidebar_style()
 create_custom_sidebar_menu()
 
-st.title("🏨 Sơ đồ phòng - The Bamboo Resort")
+st.title(f"🏨 Sơ đồ phòng - {AppConfig.RESORT_NAME}")
 
 # --- SMART POLLING (Counter-based) --- TẠM TẮT ---
 # # Init session state

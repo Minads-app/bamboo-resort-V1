@@ -29,6 +29,7 @@ from src.db import (
 )
 from src.models import Room, RoomStatus, PriceConfig, RoomType, User, UserRole, Permission, PERMISSION_METADATA
 from src.ui import apply_sidebar_style, create_custom_sidebar_menu, require_login, has_permission
+from src.config import AppConfig
 from datetime import date, datetime, timedelta
 
 st.set_page_config(page_title="Cấu hình hệ thống", layout="wide")
@@ -38,7 +39,7 @@ require_login()
 apply_sidebar_style()
 create_custom_sidebar_menu()
 
-st.title("⚙️ Cấu hình The Bamboo Resort")
+st.title(f"⚙️ Cấu hình {AppConfig.RESORT_NAME}")
 
 # Sử dụng Tabs để phân chia khu vực quản lý
 tab_types, tab_special_days, tab_rooms, tab_system, tab_staff, tab_permissions = st.tabs(
