@@ -448,7 +448,7 @@ def check_in_reserved_room(room_id: str):
 # --- FINANCE / REPORTING ---
 
 def get_all_bookings():
-    """Lấy toàn bộ bookings (phục vụ báo cáo đơn giản)."""
+    """Lấy toàn bộ bookings (CẢNH BÁO: CHỈ DÙNG KHI CẦN THIẾT HOẶC DATA ÍT)."""
     db = get_db()
     docs = db.collection("bookings").stream()
     return [doc.to_dict() for doc in docs]
@@ -456,43 +456,108 @@ def get_all_bookings():
 def get_pending_online_bookings():
     """
     Lấy danh sách booking online đang chờ xác nhận thanh toán.
-
-    Điều kiện:
-    - is_online == True
-    - online_payment_status != 'confirmed'
+    Filter directly in Firestore.
     """
     db = get_db()
-    # Để tránh phải tạo composite index phức tạp trên Firestore,
-    # ta chỉ query theo is_online và lọc trạng thái ở phía Python.
-    docs = db.collection("bookings").where("is_online", "==", True).stream()
-    results = []
-    for doc in docs:
-        data = doc.to_dict()
-        status = data.get("online_payment_status", "pending")
-        if status != "confirmed":
-            results.append(data)
-    return results
+    # status = "pending" (chưa up ảnh) hoặc "waiting_confirm" (đã up ảnh)
+    # Lưu ý: Cần composite index nếu field 'is_online' và 'online_payment_status' không có.
+    # Tuy nhiên query equality + IN thường được support tốt.
+    try:
+        docs = db.collection("bookings")\
+            .where("is_online", "==", True)\
+            .where("online_payment_status", "in", ["pending", "waiting_confirm"])\
+            .stream()
+        return [doc.to_dict() for doc in docs]
+    except Exception as e:
+        print(f"⚠️ Query pending bookings failed (Index missing?): {e}")
+        # Fallback: load all online (ít hơn load all bookings) rồi filter
+        docs = db.collection("bookings").where("is_online", "==", True).stream()
+        results = []
+        for doc in docs:
+            data = doc.to_dict()
+            if data.get("online_payment_status") in ["pending", "waiting_confirm"]:
+                results.append(data)
+        return results
 
 def get_confirmed_online_bookings(limit: int = 20):
     """
-    Lấy danh sách booking online đã được xác nhận (online_payment_status == 'confirmed').
-    Mặc định trả về tối đa 20 booking mới nhất (theo check_in giảm dần).
+    Lấy danh sách booking online đã được xác nhận.
+    Sorted by check_in desc, limit 20.
     """
     db = get_db()
-    docs = db.collection("bookings").where("is_online", "==", True).stream()
-    all_items = []
-    for doc in docs:
-        data = doc.to_dict()
-        if data.get("online_payment_status") == "confirmed":
-            all_items.append(data)
+    try:
+        docs = db.collection("bookings")\
+            .where("is_online", "==", True)\
+            .where("online_payment_status", "==", "confirmed")\
+            .order_by("check_in", direction=firestore.Query.DESCENDING)\
+            .limit(limit)\
+            .stream()
+        return [doc.to_dict() for doc in docs]
+    except Exception as e:
+        print(f"⚠️ Query confirmed bookings failed (Index missing?): {e}")
+        # Fallback manual
+        docs = db.collection("bookings").where("is_online", "==", True).stream()
+        all_items = []
+        for doc in docs:
+            data = doc.to_dict()
+            if data.get("online_payment_status") == "confirmed":
+                all_items.append(data)
+        
+        all_items.sort(key=lambda x: x.get("check_in") or datetime.min, reverse=True)
+        return all_items[:limit]
 
-    # Sắp xếp theo check_in mới nhất
-    def _key(b):
-        ci = b.get("check_in")
-        return ci or datetime.min
+# ... existing update_online_payment_proof ...
 
-    all_items.sort(key=_key, reverse=True)
-    return all_items[:limit]
+# ... existing confirm_online_booking ...
+
+# ... existing get_payment_config ...
+
+# ... existing save_payment_config ...
+
+# ... existing get_active_bookings_dict ...
+
+# ... existing get_system_config ...
+
+# ... existing save_system_config ...
+
+def get_completed_bookings(start_dt: datetime | None = None, end_dt: datetime | None = None):
+    """
+    Lấy danh sách booking đã hoàn tất (có check_out_actual) trong khoảng thời gian.
+    Queries Firestore directly using 'check_out_actual' field.
+    """
+    db = get_db()
+    
+    # Query base
+    query = db.collection("bookings")
+    
+    # Filter range
+    # Note: Firestore timestamps are UTC/Offset-aware. 
+    # Ensure start_dt/end_dt are handled correctly.
+    if start_dt:
+        query = query.where("check_out_actual", ">=", start_dt)
+    if end_dt:
+        query = query.where("check_out_actual", "<=", end_dt)
+        
+    try:
+        docs = query.stream()
+        return [doc.to_dict() for doc in docs]
+    except Exception as e:
+        print(f"⚠️ Query completed bookings failed (Index or Field missing?): {e}")
+        # Nếu fail (VD chưa đánh index), fallback về logic cũ (slow but safe)
+        all_bk = get_all_bookings()
+        results = []
+        for b in all_bk:
+            ts = b.get("check_out_actual")
+            if not ts: continue
+            if ts.tzinfo: ts = ts.replace(tzinfo=None)
+            
+            s = start_dt.replace(tzinfo=None) if start_dt and start_dt.tzinfo else start_dt
+            e = end_dt.replace(tzinfo=None) if end_dt and end_dt.tzinfo else end_dt
+            
+            if s and ts < s: continue
+            if e and ts > e: continue
+            results.append(b)
+        return results
 
 def update_online_payment_proof(
     booking_id: str,
