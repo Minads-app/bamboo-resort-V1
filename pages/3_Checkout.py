@@ -126,6 +126,7 @@ def _render_bill_html(data: dict, auto_print: bool = False) -> str:
         <table>
           <tr><td>Tiền phòng</td><td class="right">{_money(data.get("room_fee",0))} đ</td></tr>
           <tr><td>Dịch vụ / Phụ thu</td><td class="right">{_money(data.get("service_fee",0))} đ</td></tr>
+          {f'<tr><td>Giảm giá</td><td class="right">-{_money(data.get("discount",0))} đ</td></tr>' if data.get('discount', 0) > 0 else ''}
           <tr><td><b>Tổng cộng</b></td><td class="right"><b>{_money(data.get("total_gross",0))} đ</b></td></tr>
           <tr><td>Đã cọc</td><td class="right">-{_money(data.get("deposit",0))} đ</td></tr>
           <tr><td class="total">Khách cần trả</td><td class="right total">{_money(data.get("final_payment",0))} đ</td></tr>
@@ -174,6 +175,7 @@ if st.session_state["checkout_success_data"]:
               <hr>
               <p><b>Tiền phòng:</b> {_money(data.get('room_fee',0))} đ</p>
               <p><b>Dịch vụ/phụ thu:</b> {_money(data.get('service_fee',0))} đ</p>
+              {f"<p><b>Giảm giá:</b> -{_money(data.get('discount',0))} đ</p>" if data.get('discount', 0) > 0 else ''}
               <p><b>Tổng cộng:</b> {_money(data.get('total_gross',0))} đ</p>
               <p><b>Đã cọc:</b> -{_money(data.get('deposit',0))} đ</p>
               <p style="font-size:18px;"><b>KHÁCH CẦN TRẢ:</b> {_money(data.get('final_payment',0))} đ</p>
@@ -320,39 +322,63 @@ with col_bill:
                     st.write(f"- {item['name']} x{item['qty']} = {item['total']:,.0f} đ")
             st.divider()
     
-    # --- FORM HÓA ĐƠN ---
+    # --- HÓA ĐƠN CHI TIẾT ---
+    # Get current user role for permission check
+    current_user = st.session_state.get("user", {})
+    user_role = current_user.get("role", "receptionist")
+    is_manager_or_above = user_role in ["admin", "manager"]
+    
+    # 1. Tiền phòng - hiển thị
+    c1, c2 = st.columns([2, 1])
+    c1.write("Tiền phòng (Tính đến hiện tại):")
+    c2.write(f"**{int(room_fee):,} đ**")
+    
+    # 2. Dịch vụ
+    c3, c4 = st.columns([2, 1])
+    c3.write("Dịch vụ / Phụ thu:")
+    c4.write(f"**{int(calc_service_fee):,} đ**")
+    
+    # 3. Giảm giá (Manager only)
+    discount = 0
+    if is_manager_or_above:
+        discount = st.number_input(
+            "Giảm giá (Chỉ Quản lý):", 
+            value=0, 
+            step=10000, 
+            format="%d",
+            key="discount_input"
+        )
+    
+    # Calculate totals with discount
+    subtotal = room_fee + calc_service_fee
+    deposit = booking.get('deposit', 0.0)
+    total_after_discount = subtotal - discount
+    final_payment = total_after_discount - deposit
+    
+    st.divider()
+    
+    # Display calculation summary
+    with st.container(border=True):
+        st.markdown(f"**Tổng phụ:** {int(subtotal):,} đ")
+        if discount > 0:
+            st.markdown(f"**Giảm giá:** :red[-{int(discount):,} đ]")
+        st.markdown(f"**Đã cọc:** -{int(deposit):,} đ")
+        st.markdown(f"### 👉 KHÁCH CẦN TRẢ: :green[{int(final_payment):,} VNĐ]")
+    
+    st.write("")
+    
+    # Form chỉ chứa payment method và note
     with st.form("billing_form"):
-        # 1. Tiền phòng
-        c1, c2 = st.columns([3, 1])
-        c1.write("Tiền phòng (Tính đến hiện tại):")
-        # Cho phép sửa tay tiền phòng nếu lễ tân muốn giảm giá/deal giá
-        final_room_fee = c2.number_input("Tiền phòng", value=float(room_fee), step=10000.0, label_visibility="collapsed")
-        
-        # 2. Phụ thu / Dịch vụ (Minibar, nước ngọt...)
-        c3, c4 = st.columns([3, 1])
-        c3.write("Dịch vụ / Phụ thu (Nước, Mì, Giặt ủi...):")
-        # Auto-fill service fee
-        service_fee = c4.number_input("Phụ thu", value=float(calc_service_fee), step=5000.0, label_visibility="collapsed")
-        
-        st.divider()
-        
-        # 3. Tổng cộng
-        total_gross = final_room_fee + service_fee
-        deposit = booking.get('deposit', 0.0)
-        final_payment = total_gross - deposit
-        
-        st.markdown(f"**Tổng tiền:** {total_gross:,.0f} đ")
-        st.markdown(f"**Đã cọc:** -{deposit:,.0f} đ")
-        st.markdown(f"### 👉 KHÁCH CẦN TRẢ: {final_payment:,.0f} VNĐ")
-        
-        st.write("")
         payment_method = st.radio("Phương thức thanh toán:", ["Tiền mặt", "Chuyển khoản", "Thẻ"], horizontal=True)
         note = st.text_area("Ghi chú hóa đơn (nếu có)")
         
         submitted = st.form_submit_button("💰 XÁC NHẬN THANH TOÁN & TRẢ PHÒNG", type="primary", use_container_width=True)
         
         if submitted:
-            success, msg = process_checkout(booking_id, selected_room_id, total_gross, payment_method, note, service_fee=float(service_fee))
+            # Use calculated values from outside form
+            total_gross = total_after_discount
+            
+            success, msg = process_checkout(booking_id, selected_room_id, total_gross, payment_method, note, service_fee=float(calc_service_fee))
             if success:
                 # Lưu dữ liệu hóa đơn để hiện màn hình bill
                 st.session_state["checkout_success_data"] = {
@@ -362,8 +388,9 @@ with col_bill:
                     "customer_phone": booking.get("customer_phone", ""),
                     "check_in": check_in,
                     "check_out": check_out_now,
-                    "room_fee": float(final_room_fee or 0.0),
-                    "service_fee": float(service_fee or 0.0),
+                    "room_fee": float(room_fee or 0.0),
+                    "service_fee": float(calc_service_fee or 0.0),
+                    "discount": float(discount or 0.0),
                     "total_gross": float(total_gross or 0.0),
                     "deposit": float(deposit or 0.0),
                     "final_payment": float(final_payment or 0.0),
@@ -375,8 +402,16 @@ with col_bill:
             else:
                 st.error(f"Lỗi: {msg}")
 
+
+
+
 # --- 3. IN BILL (PREVIEW) ---
 # Phần này hiển thị đơn giản dạng text để lễ tân copy hoặc xem lại
+preview_total = subtotal - discount
+preview_final = preview_total - deposit
+
+discount_line = f"\n    Giảm giá:     -{discount:,.0f}" if discount > 0 else ""
+
 with st.expander("Xem trước mẫu in bill"):
     st.code(f"""
     --- THE BAMBOO RESORT ---
@@ -387,12 +422,13 @@ with st.expander("Xem trước mẫu in bill"):
     Check-in: {check_in.strftime('%d/%m/%Y %H:%M')}
     Check-out: {check_out_now.strftime('%d/%m/%Y %H:%M')}
     -------------------------
-    Tiền phòng:   {final_room_fee:,.0f}
-    Dịch vụ:      {service_fee:,.0f}
-    Tổng cộng:    {total_gross:,.0f}
+    Tiền phòng:   {room_fee:,.0f}
+    Dịch vụ:      {calc_service_fee:,.0f}{discount_line}
+    Tổng cộng:    {preview_total:,.0f}
     Đã cọc:       {deposit:,.0f}
     -------------------------
-    THANH TOÁN:   {final_payment:,.0f} VNĐ
+    THANH TOÁN:   {preview_final:,.0f} VNĐ
     -------------------------
     Cảm ơn quý khách!
     """, language="text")
+

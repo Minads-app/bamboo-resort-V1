@@ -2,7 +2,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import streamlit as st
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from src.models import Booking, BookingStatus, RoomStatus
 import uuid
 
@@ -71,6 +71,28 @@ def get_db():
     """Lấy object kết nối tới DB (Cached)"""
     return get_firebase_client()
 
+# --- SMART POLLING HELPERS (Counter-based) ---
+def trigger_system_update():
+    """Tăng bộ đếm thay đổi hệ thống để các client khác biết mà reload."""
+    try:
+        db = get_db()
+        db.collection("config").document("system_status").set({
+            "update_counter": firestore.Increment(1)
+        }, merge=True)
+    except Exception as e:
+        print(f"⚠️ Failed to trigger system update: {e}")
+
+def get_system_update_counter():
+    """Lấy giá trị bộ đếm cập nhật hệ thống (số nguyên đơn giản)."""
+    try:
+        db = get_db()
+        doc = db.collection("config").document("system_status").get()
+        if doc.exists:
+            return doc.to_dict().get("update_counter", 0)
+    except Exception:
+        pass
+    return 0
+
 # --- 2. LOGIC XỬ LÝ DỮ LIỆU (CRUD) ---
 
 def save_room_type_to_db(room_type_data: dict):
@@ -97,7 +119,7 @@ def delete_room_type(type_code: str):
         db.collection("config_room_types").document(type_code).delete()
         get_all_room_types.clear()
 
-# --- LOGIC PHÒNG (ROOMS) ---
+# --- LOGIC PHÒNG (ROOMS) & HOLDING MECHANISM ---
 
 def save_room_to_db(room_data: dict):
     """Lưu phòng (101, 102...)"""
@@ -108,10 +130,144 @@ def save_room_to_db(room_data: dict):
         db.collection("rooms").document(doc_id).set(room_data)
 
 def get_all_rooms():
-    """Lấy danh sách tất cả phòng"""
+    """
+    Lấy danh sách tất cả phòng.
+    - Tự động kiểm tra và nhả phòng bị giữ quá hạn (Lazy Release).
+    """
     db = get_db()
     docs = db.collection("rooms").stream()
-    return [doc.to_dict() for doc in docs]
+    rooms = []
+    
+    now = datetime.now()
+    batch = db.batch()
+    needs_commit = False
+
+    for doc in docs:
+        r = doc.to_dict()
+        # Kiểm tra Lazy Release cho TEMP_LOCKED
+        if r.get("status") == RoomStatus.TEMP_LOCKED:
+            locked_until = r.get("locked_until")
+            # Convert timestamp to datetime if needed
+            if locked_until and locked_until.tzinfo:
+                locked_until = locked_until.replace(tzinfo=None)
+                
+            if locked_until and locked_until < now:
+                # Đã hết hạn giữ -> Release về AVAILABLE
+                ref = db.collection("rooms").document(r["id"])
+                batch.update(ref, {
+                    "status": RoomStatus.AVAILABLE,
+                    "locked_until": firestore.DELETE_FIELD,
+                    "locked_by": firestore.DELETE_FIELD
+                })
+                needs_commit = True
+                # Update local data for return
+                r["status"] = RoomStatus.AVAILABLE.value
+                r.pop("locked_until", None)
+                r.pop("locked_by", None)
+
+        rooms.append(r)
+    
+    if needs_commit:
+        try:
+            batch.commit()
+            print("✅ Auto-released expired rooms.")
+        except Exception as e:
+            print(f"⚠️ Failed to auto-release rooms: {e}")
+
+    return rooms
+
+def hold_room(room_id: str, user_session_id: str, duration_minutes: int = 5) -> tuple[bool, str]:
+    """
+    Cố gắng giữ phòng trong `duration_minutes`.
+    - Sử dụng Transaction để đảm bảo tính toàn vẹn.
+    - Trả về (True, "Success") hoặc (False, "Lỗi...").
+    """
+    if not room_id: return False, "Missing room_id"
+    if not user_session_id: return False, "Missing session_id"
+
+    db = get_db()
+    room_ref = db.collection("rooms").document(room_id)
+
+    @firestore.transactional
+    def _hold_in_transaction(transaction, ref, uid, duration):
+        snapshot = ref.get(transaction=transaction)
+        if not snapshot.exists:
+            return False, "Phòng không tồn tại"
+        
+        data = snapshot.to_dict()
+        status = data.get("status")
+        current_lock_owner = data.get("locked_by")
+        
+        now = datetime.now()
+        
+        # Case 1: Phòng đang AVAILABLE -> Lock được
+        if status == RoomStatus.AVAILABLE or status == "Trống":
+            pass # OK to lock
+            
+        # Case 2: Phòng đang TEMP_LOCKED
+        elif status == RoomStatus.TEMP_LOCKED or status == "Đang thao tác":
+            # Nếu là chính mình đang lock -> Gia hạn
+            if current_lock_owner == uid:
+                pass # OK to extend
+            else:
+                # Nếu người khác lock, kiểm tra hết hạn chưa
+                locked_until = data.get("locked_until")
+                if locked_until:
+                    if locked_until.tzinfo: locked_until = locked_until.replace(tzinfo=None)
+                    
+                    if locked_until > now:
+                        return False, "Phòng đang được người khác giữ"
+                # Nếu hết hạn -> Cướp lock (OK)
+                
+        # Case 3: Phòng đang Bận (Occupied, Reserved, Dirty...)
+        else:
+            return False, f"Phòng đang bận ({status})"
+
+        # Thực hiện Lock
+        expire_time = now + timedelta(minutes=duration)
+        transaction.update(ref, {
+            "status": RoomStatus.TEMP_LOCKED.value,
+            "locked_until": expire_time,
+            "locked_by": uid
+        })
+        return True, "Giữ phòng thành công"
+
+    try:
+        transaction = db.transaction()
+        success, msg = _hold_in_transaction(transaction, room_ref, user_session_id, duration_minutes)
+        if success:
+            trigger_system_update()
+        return success, msg
+    except Exception as e:
+        return False, str(e)
+
+def release_room_hold(room_id: str, user_session_id: str):
+    """
+    Nhả phòng (Huỷ giữ) nếu đang được giữ bởi user này.
+    """
+    if not room_id or not user_session_id: return
+    
+    db = get_db()
+    room_ref = db.collection("rooms").document(room_id)
+    
+    try:
+        doc = room_ref.get()
+        if doc.exists:
+            data = doc.to_dict()
+            # Chỉ nhả nếu đang LOCKED và đúng chủ
+            if (data.get("status") == RoomStatus.TEMP_LOCKED and 
+                data.get("locked_by") == user_session_id):
+                
+                room_ref.update({
+                    "status": RoomStatus.AVAILABLE.value,
+                    "locked_until": firestore.DELETE_FIELD,
+                    "locked_by": firestore.DELETE_FIELD
+                })
+                trigger_system_update()
+                return True
+    except Exception as e:
+        print(f"Error releasing room: {e}")
+    return False
 
 def delete_room(room_id: str):
     """Xóa phòng"""
@@ -154,6 +310,7 @@ def create_booking(booking: Booking, is_checkin_now: bool):
             "status": room_status,
             "current_booking_id": booking.id
         })
+        trigger_system_update()
         return True, booking.id
     except Exception as e:
         return False, str(e)
@@ -231,6 +388,7 @@ def process_checkout(booking_id: str, room_id: str, final_amount: float, payment
             "status": RoomStatus.DIRTY, # Chuyển sang dơ để dọn dẹp
             "current_booking_id": firestore.DELETE_FIELD # Xóa link booking
         })
+        trigger_system_update()
         return True, "Thanh toán thành công"
     except Exception as e:
         return False, str(e)
@@ -239,6 +397,7 @@ def update_room_status(room_id: str, new_status: str):
     """Hàm phụ trợ: Dùng để cập nhật trạng thái phòng (VD: Dọn xong -> Trống)"""
     db = get_db()
     db.collection("rooms").document(room_id).update({"status": new_status})
+    trigger_system_update()
 
 def check_in_reserved_room(room_id: str):
     """
@@ -280,6 +439,7 @@ def check_in_reserved_room(room_id: str):
         db.collection("rooms").document(room_id).update({
             "status": RoomStatus.OCCUPIED,
         })
+        trigger_system_update()
 
         return True, booking_id
     except Exception as e:
@@ -376,6 +536,7 @@ def confirm_online_booking(booking_id: str):
                 {"status": RoomStatus.RESERVED.value}
             )
 
+        trigger_system_update()
         return True, "OK"
     except Exception as e:
         return False, str(e)
@@ -714,3 +875,104 @@ def get_recent_service_orders(limit=50):
         
     orders.sort(key=_sort_key, reverse=True)
     return orders[:limit]
+
+# --- 7. PERMISSION MANAGEMENT ---
+
+def get_role_permissions(role: str):
+    """
+    Lấy danh sách quyền của một vai trò.
+    
+    Nếu chưa có cấu hình trong DB, sẽ trả về cấu hình mặc định.
+    Trả về: List[str] - danh sách permission values
+    """
+    from src.models import DEFAULT_ROLE_PERMISSIONS, UserRole
+    
+    db = get_db()
+    doc = db.collection("config_permissions").document(role).get()
+    
+    if doc.exists:
+        data = doc.to_dict()
+        return data.get("permissions", [])
+    
+    # Fallback: Trả về default
+    try:
+        role_enum = UserRole(role)
+        default_perms = DEFAULT_ROLE_PERMISSIONS.get(role_enum, [])
+        # Convert Permission enum to string values
+        return [p.value if hasattr(p, 'value') else p for p in default_perms]
+    except:
+        return []
+
+def save_role_permissions(role: str, permissions: list):
+    """
+    Lưu cấu hình quyền cho một vai trò.
+    
+    Args:
+        role: Vai trò (admin, manager, accountant, receptionist)
+        permissions: List các permission values (strings)
+    """
+    db = get_db()
+    db.collection("config_permissions").document(role).set({
+        "role": role,
+        "permissions": permissions,
+        "updated_at": datetime.now()
+    })
+    # Clear cache if exists
+    if hasattr(get_all_role_permissions, 'clear'):
+        get_all_role_permissions.clear()
+
+@st.cache_data(ttl=300)  # Cache 5 minutes
+def get_all_role_permissions():
+    """
+    Lấy tất cả cấu hình phân quyền.
+    
+    Trả về: Dict[str, List[str]] - {role: [permissions]}
+    """
+    from src.models import UserRole, DEFAULT_ROLE_PERMISSIONS
+    
+    db = get_db()
+    docs = db.collection("config_permissions").stream()
+    
+    result = {}
+    configured_roles = set()
+    
+    for doc in docs:
+        data = doc.to_dict()
+        role = data.get("role")
+        if role:
+            result[role] = data.get("permissions", [])
+            configured_roles.add(role)
+    
+    # Add defaults for roles not yet configured
+    for role_enum in UserRole:
+        role = role_enum.value
+        if role not in configured_roles:
+            default_perms = DEFAULT_ROLE_PERMISSIONS.get(role_enum, [])
+            result[role] = [p.value if hasattr(p, 'value') else p for p in default_perms]
+    
+    return result
+
+def init_default_permissions():
+    """
+    Khởi tạo phân quyền mặc định cho tất cả vai trò nếu chưa có.
+    
+    Chỉ chạy lần đầu hoặc khi reset cấu hình.
+    """
+    from src.models import UserRole, DEFAULT_ROLE_PERMISSIONS
+    
+    db = get_db()
+    
+    for role_enum in UserRole:
+        role = role_enum.value
+        doc = db.collection("config_permissions").document(role).get()
+        
+        # Chỉ tạo nếu chưa có
+        if not doc.exists:
+            default_perms = DEFAULT_ROLE_PERMISSIONS.get(role_enum, [])
+            perm_values = [p.value if hasattr(p, 'value') else p for p in default_perms]
+            
+            save_role_permissions(role, perm_values)
+    
+    # Clear cache
+    if hasattr(get_all_role_permissions, 'clear'):
+        get_all_role_permissions.clear()

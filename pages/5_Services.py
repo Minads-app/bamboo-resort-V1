@@ -83,26 +83,32 @@ with tab_order:
                 if "cart" not in st.session_state:
                     st.session_state["cart"] = {} # { item_id: {data, qty} }
                 
-                # Grid view for items
+                # Grid view for items - Ultra compact layout
                 for item in filtered_menu:
-                    c1, c2, c3 = st.columns([3, 1.5, 1], gap="small")
-                    c1.markdown(f"**{item['name']}** ({item['unit']})")
-                    c2.markdown(f"{item['price']:,.0f} đ")
+                    c1, c2, c3 = st.columns([3, 1.5, 0.8], gap="small")
                     
-                    if c3.button("➕", key=f"add_{item['id']}", help="Thêm vào giỏ"):
-                        cart = st.session_state["cart"]
-                        if item['id'] in cart:
-                            cart[item['id']]['qty'] += 1
-                        else:
-                            cart[item['id']] = {
-                                "id": item['id'],
-                                "name": item['name'],
-                                "price": item['price'],
-                                "qty": 1
-                            }
-                        st.toast(f"Đã thêm {item['name']}", icon="🛒")
+                    # Minimal padding for compact display
+                    c1.markdown(f"<p style='margin: 0; padding: 3px 0;'><b>{item['name']}</b> ({item['unit']})</p>", unsafe_allow_html=True)
+                    c2.markdown(f"<p style='margin: 0; padding: 3px 0;'>{item['price']:,.0f} đ</p>", unsafe_allow_html=True)
                     
-                    st.divider() # Compact divider
+                    # Button column
+                    with c3:
+                        if st.button("➕", key=f"add_{item['id']}", use_container_width=True):
+                            cart = st.session_state["cart"]
+                            if item['id'] in cart:
+                                cart[item['id']]['qty'] += 1
+                            else:
+                                cart[item['id']] = {
+                                    "id": item['id'],
+                                    "name": item['name'],
+                                    "price": item['price'],
+                                    "qty": 1
+                                }
+                            st.toast(f"Đã thêm {item['name']}", icon="🛒")
+                    
+                    # Thin separator line
+                    st.markdown("<hr style='margin: 2px 0; border: none; border-top: 1px solid #e0e0e0;'>", unsafe_allow_html=True)
+
             
             # 3. Giỏ hàng & Xác nhận
             with st.container(border=True):

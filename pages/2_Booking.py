@@ -1,6 +1,6 @@
 import streamlit as st
 from datetime import datetime, timedelta
-from src.db import get_all_rooms, get_all_room_types, create_booking, get_db, find_customer_by_phone
+from src.db import get_all_rooms, get_all_room_types, create_booking, get_db, find_customer_by_phone, hold_room, release_room_hold # New
 from src.models import Booking, BookingType, RoomStatus, BookingStatus
 from src.logic import calculate_estimated_price
 from src.ui import apply_sidebar_style, create_custom_sidebar_menu
@@ -12,6 +12,11 @@ require_login()
 
 apply_sidebar_style()
 create_custom_sidebar_menu()
+
+# --- INIT SESSION FOR HOLDING ---
+if "user_session_id" not in st.session_state:
+    import uuid
+    st.session_state["user_session_id"] = str(uuid.uuid4())
 
 # --- QUẢN LÝ STATE ---
 # Biến này dùng để hiện màn hình "Thành công"
@@ -102,17 +107,30 @@ try:
     type_map = {t['type_code']: t for t in room_types}
 
     # Lọc phòng trống
-    available_rooms = [r for r in rooms if r.get('status') == RoomStatus.AVAILABLE]
+    # Lọc phòng trống HOẶC phòng đang giữ bởi session này
+    available_rooms = []
+    current_session_id = st.session_state.get("user_session_id")
     
-    # Fallback cho trường hợp status lưu dạng string
-    if not available_rooms and rooms:
-        available_rooms = [r for r in rooms if str(r.get('status')) == str(RoomStatus.AVAILABLE) or str(r.get('status')) == "AVAILABLE" or r.get('status') == 'available']
+    for r in rooms:
+        status = r.get('status')
+        # Case 1: Available
+        if status == RoomStatus.AVAILABLE or str(status) == "AVAILABLE" or status == "available":
+            available_rooms.append(r)
+        # Case 2: Held by ME
+        elif status == RoomStatus.TEMP_LOCKED and r.get("locked_by") == current_session_id:
+             available_rooms.append(r)
 
     available_room_ids = [r['id'] for r in available_rooms]
 
 except Exception as e:
     st.error(f"Lỗi tải dữ liệu: {e}")
     st.stop()
+
+# Callback cập nhật ngày trả khi đổi ngày nhận
+def update_out_date():
+    in_d = st.session_state.get("in_date")
+    if in_d:
+        st.session_state["out_date"] = in_d + timedelta(days=1)
 
 if not available_rooms:
     st.warning("⚠️ Hết phòng trống!")
@@ -122,186 +140,226 @@ if not available_rooms:
     
 # Grid Layout for Input Form
 with st.container(border=True):
-    col_main, col_pay = st.columns([2, 1], gap="small")
+    # Chia thành 3 cột: Thông tin khách | Chọn phòng | Thanh toán
+    col_customer, col_rooms, col_pay = st.columns([1.2, 1.2, 1], gap="medium")
 
-    with col_main:
-        # Chia cột bên trái thành 2 cột con: Cột 1 (Khách + Thời gian) | Cột 2 (Chọn phòng + Thông tin)
-        c1, c2 = st.columns(2, gap="small")
+    # --- CỘT 1: THÔNG TIN KHÁCH & THỜI GIAN ---
+    with col_customer:
+        st.caption("1. Thông tin khách")
+        c_name = st.text_input("Họ tên khách (*)", key="c_name")
+        c_phone = st.text_input("Số điện thoại (*)", key="c_phone", on_change=check_customer_phone)
         
-        # --- CỘT 1: THÔNG TIN KHÁCH & THỜI GIAN ---
-        with c1:
-            st.caption("1. Thông tin khách")
-            c_name = st.text_input("Họ tên khách (*)", key="c_name")
-            c_phone = st.text_input("Số điện thoại (*)", key="c_phone", on_change=check_customer_phone)
+        # Loại khách và hình thức thuê
+        c_type = st.radio("", ["Khách lẻ", "Khách đoàn"], horizontal=True, label_visibility="collapsed")
+        
+        # Logic hình thức thuê
+        allowed_modes_all = set()
+        for t in room_types:
+             p = t.get('pricing', {})
+             if p.get('enable_hourly', True): allowed_modes_all.add(BookingType.HOURLY)
+             if p.get('enable_overnight', True): allowed_modes_all.add(BookingType.OVERNIGHT)
+             if p.get('enable_daily', True): allowed_modes_all.add(BookingType.DAILY)
+        
+        mode_order = [BookingType.HOURLY, BookingType.OVERNIGHT, BookingType.DAILY]
+        final_modes = [m for m in mode_order if m in allowed_modes_all]
+        if not final_modes: final_modes = [BookingType.HOURLY]
+
+        booking_mode = st.selectbox("Hình thức thuê", final_modes, format_func=lambda x: x.value)
+
+        # Time Selection Logic
+        frozen_now = st.session_state["current_checkin_time"]
+        
+        # Helper to generate slots
+        def _generate_time_slots(selected_date):
+             now = datetime.now()
+             today = now.date()
+             start_min = 0
+             
+             if selected_date == today:
+                 minutes_from_midnight = now.hour * 60 + now.minute
+                 remainder = minutes_from_midnight % 15
+                 if remainder > 0:
+                     minutes_from_midnight += (15 - remainder)
+                 start_min = minutes_from_midnight
             
-            # Gộp loại khách và hình thức thuê chung 1 hàng để tiết kiệm chỗ
-            cc_type, cc_mode = st.columns(2, gap="small")
-            with cc_type:
-                c_type = st.radio("Loại khách", ["Khách lẻ", "Khách đoàn"], horizontal=True, label_visibility="collapsed")
+             slots = []
+             for m in range(start_min, 24 * 60, 15):
+                 from datetime import time as dtime
+                 h = m // 60
+                 min_ = m % 60
+                 if h < 24:
+                    slots.append(dtime(h, min_))
+             return slots
+
+        # Check-in time
+        cc1, cc2 = st.columns(2, gap="small")
+        with cc1:
+            st.caption("Ngày nhận phòng")
+            # Thêm callback update_out_date
+            in_date = st.date_input("Ngày vào", value=frozen_now.date(), format="DD/MM/YYYY", label_visibility="collapsed", key="in_date", on_change=update_out_date)
             
-            with cc_mode:
-                # Logic xác định mode dựa trên cấu hình các loại phòng
-                # Chỉ hiện các mode mà ít nhất 1 loại phòng hỗ trợ
-                allowed_modes_all = set()
-                for t in room_types:
-                     p = t.get('pricing', {})
-                     if p.get('enable_hourly', True): allowed_modes_all.add(BookingType.HOURLY)
-                     if p.get('enable_overnight', True): allowed_modes_all.add(BookingType.OVERNIGHT)
-                     if p.get('enable_daily', True): allowed_modes_all.add(BookingType.DAILY)
-                
-                # Sort modes for consistent order
-                mode_order = [BookingType.HOURLY, BookingType.OVERNIGHT, BookingType.DAILY]
-                final_modes = [m for m in mode_order if m in allowed_modes_all]
-                if not final_modes: final_modes = [BookingType.HOURLY] # Fallback
-
-                booking_mode = st.selectbox("Hình thức thuê", final_modes, format_func=lambda x: x.value)
-
-            # Time Selection Logic
-            frozen_now = st.session_state["current_checkin_time"]
-            
-            # Helper to generate slots
-            def _generate_time_slots(selected_date):
-                 now = datetime.now()
-                 today = now.date()
-                 start_min = 0
-                 
-                 # Nếu là hôm nay, chỉ hiện giờ tương lai (làm tròn lên 15p)
-                 if selected_date == today:
-                     minutes_from_midnight = now.hour * 60 + now.minute
-                     # Làm tròn lên mốc 15 phút tiếp theo
-                     # VD: 10:01 -> 10:15, 10:14 -> 10:15, 10:15 -> 10:15? 
-                     # Nếu muốn khách vào "ngay bây giờ" thì 10:05 vẫn có thể chọn 10:00?
-                     # Yêu cầu: "nếu đặt phòng hôm nay thì các giờ trước thời điểm đặt phòng thì ẩn đi"
-                     # Tức là 10:05 thì không được chọn 10:00. Min là 10:15.
-                     remainder = minutes_from_midnight % 15
-                     if remainder > 0:
-                         minutes_from_midnight += (15 - remainder)
-                     start_min = minutes_from_midnight
-                
-                 slots = []
-                 for m in range(start_min, 24 * 60, 15):
-                     from datetime import time as dtime
-                     h = m // 60
-                     min_ = m % 60
-                     if h < 24:
-                        slots.append(dtime(h, min_))
-                 return slots
-
-            # Layout Check-in/Check-out gọn trong 1 cột
-            cc1, cc2 = st.columns(2, gap="small")
-            with cc1:
-                st.caption("Ngày nhận phòng")
-                in_date = st.date_input("Ngày vào", value=frozen_now.date(), format="DD/MM/YYYY", label_visibility="collapsed", key="in_date")
-                
-                if booking_mode == BookingType.DAILY:
-                     # Check-in 14:00
-                     check_in_time = datetime.combine(in_date, datetime.strptime("14:00", "%H:%M").time())
-                     st.info(f"🕒 {check_in_time.strftime('%H:%M')}")
-                else:
-                     # Hourly/Overnight: Selectbox 15 mins
-                     slots = _generate_time_slots(in_date)
-                     if not slots:
-                         st.error("Hết giờ hôm nay!")
-                         in_time_val = datetime.now().time() # Fallback
-                     else:
-                         # Default to nearest current time if in list, else first
-                         in_time_val = slots[0]
-                         
-                     in_time = st.selectbox("Giờ vào", slots, format_func=lambda t: t.strftime("%H:%M"), label_visibility="collapsed")
-                     check_in_time = datetime.combine(in_date, in_time)
-
-            with cc2:
-                st.caption("Ngày trả phòng")
-                # Logic tính giờ ra mặc định
-                if booking_mode == BookingType.HOURLY:
-                    default_out = check_in_time + timedelta(hours=2)
-                elif booking_mode == BookingType.OVERNIGHT:
-                    tomorrow = check_in_time + timedelta(days=1)
-                    default_out = tomorrow.replace(hour=12, minute=0, second=0)
-                else: 
-                    # DAILY
-                    tomorrow = check_in_time + timedelta(days=1)
-                    default_out = tomorrow.replace(hour=12, minute=0, second=0)
-                
-                if booking_mode == BookingType.DAILY:
-                    out_date = st.date_input("Ngày ra", value=default_out.date(), format="DD/MM/YYYY", label_visibility="collapsed", key="out_date")
-                    # Check-out 12:00
-                    check_out_time = datetime.combine(out_date, datetime.strptime("12:00", "%H:%M").time())
-                    st.info(f"🕒 {check_out_time.strftime('%H:%M')}")
-                else:
-                    out_date = st.date_input("Ngày ra", value=default_out.date(), format="DD/MM/YYYY", label_visibility="collapsed", key="out_date")
-                    # Out time cũng nên step 15p? Hay free text?
-                    # Để đồng bộ, cho free step 15p
-                    # time_input mặc định step 15p (900s)
-                    out_time = st.time_input("Giờ ra", value=default_out.time(), step=900, label_visibility="collapsed", key="out_time")
-                    check_out_time = datetime.combine(out_date, out_time)
-
-        # --- CỘT 2: CHỌN PHÒNG & GIÁ ---
-        with c2:
-            st.caption("2. Chọn phòng")
-            # Lấy room_id nếu được truyền từ Dashboard
-            prefill_room_id = st.session_state.pop("prefill_room_id", None)
-
-            # Filter rooms based on selected booking_mode
-            compatible_room_ids = []
-            for r in available_rooms:
-                t = type_map.get(r['room_type_code'], {})
-                p = t.get('pricing', {})
-                
-                is_compat = False
-                if booking_mode == BookingType.HOURLY and p.get('enable_hourly', True): is_compat = True
-                elif booking_mode == BookingType.OVERNIGHT and p.get('enable_overnight', True): is_compat = True
-                elif booking_mode == BookingType.DAILY and p.get('enable_daily', True): is_compat = True
-                
-                if is_compat:
-                    compatible_room_ids.append(r['id'])
-            
-            selected_rooms = []
-            if c_type == "Khách đoàn":
-                default_val = [prefill_room_id] if (prefill_room_id and prefill_room_id in compatible_room_ids) else []
-                selected_rooms = st.multiselect("Chọn phòng", compatible_room_ids, default=default_val, label_visibility="collapsed", placeholder="Chọn nhiều phòng...")
+            if booking_mode == BookingType.DAILY:
+                 check_in_time = datetime.combine(in_date, datetime.strptime("14:00", "%H:%M").time())
+                 st.info(f"🕒 {check_in_time.strftime('%H:%M')}")
             else:
-                default_index = 0
-                if prefill_room_id in compatible_room_ids:
-                    default_index = compatible_room_ids.index(prefill_room_id)
+                 slots = _generate_time_slots(in_date)
+                 if not slots:
+                     st.error("Hết giờ hôm nay!")
+                     in_time_val = datetime.now().time()
+                 else:
+                     in_time_val = slots[0]
+                     
+                 in_time = st.selectbox("Giờ vào", slots, format_func=lambda t: t.strftime("%H:%M"), label_visibility="collapsed")
+                 check_in_time = datetime.combine(in_date, in_time)
+
+        with cc2:
+            st.caption("Ngày trả phòng")
+            if booking_mode == BookingType.HOURLY:
+                default_out = check_in_time + timedelta(hours=2)
+            elif booking_mode == BookingType.OVERNIGHT:
+                tomorrow = check_in_time + timedelta(days=1)
+                default_out = tomorrow.replace(hour=12, minute=0, second=0)
+            else: 
+                tomorrow = check_in_time + timedelta(days=1)
+                default_out = tomorrow.replace(hour=12, minute=0, second=0)
+            
+            if booking_mode == BookingType.DAILY:
+                # Nếu chưa có trong session, set default
+                if "out_date" not in st.session_state:
+                    st.session_state["out_date"] = default_out.date()
                 
-                if compatible_room_ids:
-                    s_r = st.selectbox("Chọn phòng", compatible_room_ids, index=default_index, label_visibility="collapsed")
-                    if s_r: selected_rooms = [s_r]
-                else:
-                    st.warning(f"Không có phòng nào hỗ trợ hình thức {booking_mode.value}")
+                # Dùng key="out_date" để bind với session_state
+                out_date = st.date_input("Ngày ra", format="DD/MM/YYYY", label_visibility="collapsed", key="out_date")
+                check_out_time = datetime.combine(out_date, datetime.strptime("12:00", "%H:%M").time())
+                st.info(f"🕒 {check_out_time.strftime('%H:%M')}")
+            else:
+                out_date = st.date_input("Ngày ra", value=default_out.date(), format="DD/MM/YYYY", label_visibility="collapsed", key="out_date")
+                out_time = st.time_input("Giờ ra", value=default_out.time(), step=900, label_visibility="collapsed", key="out_time")
+                check_out_time = datetime.combine(out_date, out_time)
 
-            # Hiển thị thông tin phòng theo Mode
-            if selected_rooms and len(selected_rooms) == 1:
-                rid = selected_rooms[0]
-                r_obj = next((r for r in available_rooms if r['id'] == rid), None)
-                if r_obj:
-                    t_info = type_map.get(r_obj['room_type_code'], {})
-                    p_info = t_info.get('pricing', {})
-                    
-                    # --- LOGIC HIỂN THỊ GIÁ DYNAMIC ---
-                    price_html = ""
-                    if booking_mode == BookingType.OVERNIGHT:
-                         price_html = f'<div style="display: flex; justify-content: space-between;"><span>Qua đêm:</span> <b>{p_info.get("overnight_price", 0):,.0f}</b></div>'
-                    elif booking_mode == BookingType.DAILY:
-                         price_html = f'<div style="display: flex; justify-content: space-between;"><span>Theo ngày:</span> <b>{p_info.get("daily_price", 0):,.0f}</b></div>'
-                    elif booking_mode == BookingType.HOURLY:
-                         h_price = p_info.get('hourly_blocks', {}).get('1', 0)
-                         price_html = f'<div style="display: flex; justify-content: space-between;"><span>Theo giờ (1h):</span> <b>{h_price:,.0f}</b></div>'
+    # --- CỘT 2: CHỌN PHÒNG ---
+    with col_rooms:
+        st.caption("2. Chọn phòng")
+        prefill_room_id = st.session_state.pop("prefill_room_id", None)
 
-                    st.markdown(f"""
-                    <div class="room-info-card">
-                        <div class="room-info-header">ℹ️ {t_info.get('name', 'Phòng')} ({rid})</div>
-                        <div class="room-info-price">
-                            {price_html}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+        # Filter rooms based on booking mode
+        compatible_room_ids = []
+        for r in available_rooms:
+            t = type_map.get(r['room_type_code'], {})
+            p = t.get('pricing', {})
+            
+            is_compat = False
+            if booking_mode == BookingType.HOURLY and p.get('enable_hourly', True): is_compat = True
+            elif booking_mode == BookingType.OVERNIGHT and p.get('enable_overnight', True): is_compat = True
+            elif booking_mode == BookingType.DAILY and p.get('enable_daily', True): is_compat = True
+            
+            if is_compat:
+                compatible_room_ids.append(r['id'])
         
+        # Logic chọn phòng & Giữ chỗ (Hold) - WORKFLOW MỚI
+        
+        # 1. Hàm xử lý khi bấm nút "Thoát" hoặc "Huỷ chọn"
+        def release_all_held_rooms():
+            current_held = st.session_state.get("last_admin_held_rooms", [])
+            for rid in current_held:
+                release_room_hold(rid, st.session_state["user_session_id"])
+            st.session_state["last_admin_held_rooms"] = []
+            st.session_state["admin_selected_rooms"] = [] # Reset multiselect
+            st.session_state["admin_single_room"] = None # Reset single select
+            st.toast("Đã huỷ chọn và nhả phòng", icon="🔓")
+
+        # 2. UI chọn phòng
+        selected_rooms = []
+        is_held = False # Trạng thái đã giữ chỗ thành công chưa
+        current_held = st.session_state.get("last_admin_held_rooms", [])
+
+        if c_type == "Khách đoàn":
+            # Nếu đang giữ phòng, không cho chọn lại (phải huỷ trước)
+            if current_held:
+                st.info(f"🔒 Đang giữ {len(current_held)} phòng: {', '.join(current_held)}")
+                selected_rooms = current_held
+                is_held = True
+            else:
+                 selected_rooms = st.multiselect(
+                    "Chọn phòng", 
+                    compatible_room_ids, 
+                    default=[], 
+                    label_visibility="collapsed", 
+                    placeholder="Mời chọn phòng...",
+                    key="admin_selected_rooms"
+                )
+        else:
+             if current_held:
+                st.info(f"🔒 Đang giữ phòng: {current_held[0]}")
+                selected_rooms = current_held
+                is_held = True
+             else:
+                s_r = st.selectbox(
+                    "Chọn phòng", 
+                    [""] + compatible_room_ids, # Thêm option rỗng
+                    index=0, 
+                    label_visibility="collapsed",
+                    key="admin_single_room",
+                    format_func=lambda x: "Mời chọn phòng..." if x == "" else x
+                )
+                if s_r: selected_rooms = [s_r]
+
         if not selected_rooms:
-            st.info("⬅️ Vui lòng chọn phòng.")
-            st.stop()
-        
+             st.info("⬅️ Vui lòng chọn phòng để bắt đầu.")
+             st.stop()
+
+        # 3. Nút xác nhận giữ / huỷ
+        if not is_held:
+            st.warning(f"Bạn chọn: {', '.join(selected_rooms)}. Bấm xác nhận để giữ phòng.")
+            if st.button("🔒 Xác nhận giữ phòng (5 phút)", type="primary"):
+                 # Thực hiện Hold
+                valid_holds = []
+                for rid in selected_rooms:
+                    success, msg = hold_room(rid, st.session_state["user_session_id"], duration_minutes=5)
+                    if success:
+                        valid_holds.append(rid)
+                    else:
+                        st.error(f"Phòng {rid}: {msg}")
+                
+                if valid_holds:
+                    st.session_state["last_admin_held_rooms"] = valid_holds
+                    st.rerun() # Reload để update UI sang trạng thái "Đang giữ"
+        else:
+            # Đang giữ -> Cho phép Huỷ/Thoát
+            if st.button("❌ Huỷ chọn & Thoát", type="secondary"):
+                release_all_held_rooms()
+                st.rerun()
+
+        # Hiển thị thông tin phòng
+        if selected_rooms and len(selected_rooms) == 1:
+            rid = selected_rooms[0]
+            r_obj = next((r for r in available_rooms if r['id'] == rid), None)
+            if r_obj:
+                t_info = type_map.get(r_obj['room_type_code'], {})
+                p_info = t_info.get('pricing', {})
+                
+                price_html = ""
+                if booking_mode == BookingType.OVERNIGHT:
+                     price_html = f'<div style="display: flex; justify-content: space-between;"><span>Qua đêm:</span> <b>{p_info.get("overnight_price", 0):,.0f}</b></div>'
+                elif booking_mode == BookingType.DAILY:
+                     price_html = f'<div style="display: flex; justify-content: space-between;"><span>Theo ngày:</span> <b>{p_info.get("daily_price", 0):,.0f}</b></div>'
+                elif booking_mode == BookingType.HOURLY:
+                     h_price = p_info.get('hourly_blocks', {}).get('1', 0)
+                     price_html = f'<div style="display: flex; justify-content: space-between;"><span>Theo giờ (1h):</span> <b>{h_price:,.0f}</b></div>'
+
+                st.markdown(f"""
+                <div class="room-info-card">
+                    <div class="room-info-header">ℹ️ {t_info.get('name', 'Phòng')} ({rid})</div>
+                    <div class="room-info-price">
+                        {price_html}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+    
+    if not selected_rooms:
+        st.info("⬅️ Vui lòng chọn phòng.")
+        st.stop()
+    
     with col_pay:
         st.caption("3. Xác nhận & Thanh toán")
         

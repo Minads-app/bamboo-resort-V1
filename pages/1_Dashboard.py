@@ -7,6 +7,8 @@ from src.db import (
     get_pending_online_bookings,
     get_confirmed_online_bookings,
     confirm_online_booking,
+    get_active_bookings_dict,
+    get_system_update_counter,
 )
 from src.models import RoomStatus
 from src.ui import apply_sidebar_style, create_custom_sidebar_menu
@@ -21,15 +23,51 @@ create_custom_sidebar_menu()
 
 st.title("🏨 Sơ đồ phòng - The Bamboo Resort")
 
-# --- 1. LẤY DỮ LIỆU ---
+# --- SMART POLLING (Counter-based) --- TẠM TẮT ---
+# # Init session state
+# if "sp_counter" not in st.session_state:
+#     st.session_state["sp_counter"] = -1  # Force first fetch
+# if "sp_rooms" not in st.session_state:
+#     st.session_state["sp_rooms"] = None
+# if "sp_bookings" not in st.session_state:
+#     st.session_state["sp_bookings"] = None
+#
+# st.sidebar.markdown("### ⏱ Cài đặt")
+# enable_polling = st.sidebar.toggle("Tự động cập nhật (Real-time)", value=True, help="Tự động kiểm tra thay đổi mỗi 5 giây. Chi phí: ~1 read/5s (rất rẻ).")
+#
+# if enable_polling:
+#     try:
+#         from streamlit_autorefresh import st_autorefresh
+#         st_autorefresh(interval=5000, key="dashboard_autorefresh")
+#     except ImportError:
+#         st.sidebar.error("⚠️ Cần cài: pip install streamlit-autorefresh")
+#
+# # Force Reload Button
+# if st.sidebar.button("🔄 Tải lại ngay", use_container_width=True):
+#     st.session_state["sp_counter"] = -1  # Force re-fetch
+#     st.rerun()
+#
+# # --- CHECK COUNTER (1 read) ---
+# server_counter = get_system_update_counter()
+# local_counter = st.session_state["sp_counter"]
+#
+# if server_counter != local_counter or st.session_state["sp_rooms"] is None:
+#     rooms = get_all_rooms()
+#     active_bookings_map = get_active_bookings_dict()
+#     st.session_state["sp_rooms"] = rooms
+#     st.session_state["sp_bookings"] = active_bookings_map
+#     st.session_state["sp_counter"] = server_counter
+# else:
+#     rooms = st.session_state["sp_rooms"]
+#     active_bookings_map = st.session_state["sp_bookings"]
+# --- END TẠM TẮT ---
+
+# Luôn fetch dữ liệu mới khi tải trang
 rooms = get_all_rooms()
+active_bookings_map = get_active_bookings_dict()
+
 types = get_all_room_types()
 type_map = {t["type_code"]: t["name"] for t in types}
-
-# OPTIMIZATION: Fetch all active bookings once
-# This avoids N+1 queries when rendering room cards
-from src.db import get_active_bookings_dict
-active_bookings_map = get_active_bookings_dict()
 
 # --- 1b. BOOKING ONLINE CHỜ XÁC NHẬN & LỊCH SỬ ---
 col_pending, col_history = st.columns(2)
@@ -163,6 +201,8 @@ def get_status_style(status_str):
         return "🧹", "#fffbe6", "border: 2px solid #ffeb3b;", "Cần dọn" # Vàng (Dơ)
     elif status_str == RoomStatus.MAINTENANCE:
         return "🔧", "#f0f2f6", "border: 2px solid #9e9e9e;", "Bảo trì" # Xám (Bảo trì)
+    elif status_str == RoomStatus.TEMP_LOCKED:
+        return "⏳", "#fffae6", "border: 2px solid #ffd700;", "Đang thao tác" # Vàng cam
     else:
         return "❓", "#ffffff", "border: 2px solid #ccc;", "Khác"
 

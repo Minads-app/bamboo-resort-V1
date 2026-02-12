@@ -20,6 +20,8 @@ from src.db import (
     get_payment_config,
     get_booking_by_id,
     get_system_config,
+    hold_room,         # New
+    release_room_hold, # New
 )
 from src.models import Booking, BookingType, RoomStatus
 from src.ui import apply_sidebar_style, create_custom_sidebar_menu
@@ -28,6 +30,11 @@ from src.logic import calculate_estimated_price, get_applicable_price_config # I
 st.set_page_config(page_title="Đặt phòng Online", layout="wide")
 apply_sidebar_style()
 #create_custom_sidebar_menu()
+
+# --- INIT SESSION FOR HOLDING ---
+if "user_session_id" not in st.session_state:
+    import uuid
+    st.session_state["user_session_id"] = str(uuid.uuid4())
 
 st.title("🌐 Đặt phòng Online - The Bamboo Resort")
 st.caption(
@@ -38,7 +45,6 @@ st.caption(
 st.markdown("### 1️⃣ Thông tin đặt phòng")
 
 rooms = get_all_rooms()
-rooms = get_all_rooms()
 room_types = get_all_room_types()
 # Lấy cấu hình hệ thống
 try:
@@ -48,7 +54,18 @@ except:
 
 type_map = {t["type_code"]: t for t in room_types}
 
-available_rooms = [r for r in rooms if r.get("status") == RoomStatus.AVAILABLE]
+# Filter available rooms AND rooms held by THIS session
+session_id = st.session_state["user_session_id"]
+available_rooms = []
+for r in rooms:
+    status = r.get("status")
+    # Phòng OK nếu AVAILABLE
+    if status == RoomStatus.AVAILABLE:
+        available_rooms.append(r)
+    # HOẶC nếu đang TEMP_LOCKED bởi chính mình
+    elif status == RoomStatus.TEMP_LOCKED and r.get("locked_by") == session_id:
+        available_rooms.append(r)
+
 available_room_ids = [r["id"] for r in available_rooms]
 
 if not available_rooms:
@@ -83,10 +100,40 @@ with col_room:
     if not filtered_rooms:
         st.warning("Loại phòng này hiện đã hết. Vui lòng chọn loại khác.")
 
+    # Logic chọn phòng & Giữ chỗ (Hold)
+    def on_room_change():
+        # Release old room if exists
+        old_room = st.session_state.get("last_held_room")
+        if old_room:
+             release_room_hold(old_room, session_id)
+        
+        # Hold new room
+        new_room = st.session_state.get("selected_room_id_key")
+        if new_room:
+             success, msg = hold_room(new_room, session_id, duration_minutes=5)
+             if success:
+                 st.session_state["last_held_room"] = new_room
+                 st.toast(f"Đang giữ phòng {new_room} trong 5 phút", icon="⏳")
+             else:
+                 st.error(f"Không thể giữ phòng: {msg}")
+                 # Force reload to update list
+                 
     selected_room_id = st.selectbox(
         "Chọn phòng (nếu muốn chọn cụ thể)",
         options=filtered_room_ids or available_room_ids,
+        key="selected_room_id_key",
+        on_change=on_room_change
     )
+    
+    # Trigger hold on first load / default selection
+    if selected_room_id and st.session_state.get("last_held_room") != selected_room_id:
+         # Initial hold for default selection
+         success, msg = hold_room(selected_room_id, session_id, duration_minutes=5)
+         if success:
+             st.session_state["last_held_room"] = selected_room_id
+         else:
+             # Should warn user but it's tricky inside render loop
+             pass
 
 def _generate_time_slots(selected_date: date) -> list[dtime]:
     """Sinh danh sách mốc giờ theo bước 15 phút.

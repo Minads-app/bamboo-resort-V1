@@ -329,6 +329,49 @@ def apply_sidebar_style():
             margin-bottom: 0.5rem !important;
         }
         
+        /* --- FIX TOOLTIP BỊ CHE KHUẤT (COMPREHENSIVE) --- */
+        /* Remove overflow hidden from all containers */
+        div[data-testid="column"],
+        div[data-testid="stHorizontalBlock"],
+        div[data-testid="stVerticalBlock"],
+        .element-container,
+        .stButton {
+            overflow: visible !important;
+        }
+        
+        /* Ensure tooltip has highest z-index and proper positioning */
+        [role="tooltip"],
+        .stTooltipContent,
+        [data-testid="stTooltipIcon"],
+        [data-baseweb="tooltip"] {
+            z-index: 2147483647 !important; /* Max z-index */
+            position: fixed !important;
+        }
+        
+        /* Button container must be relative and allow overflow */
+        button[title] {
+            position: relative !important;
+            overflow: visible !important;
+        }
+        
+        /* On hover, increase z-index of button */
+        button[title]:hover {
+            z-index: 2147483646 !important;
+            position: relative !important;
+        }
+        
+        /* Fix for BaseWeb tooltip components */
+        [data-baseweb="popover"] {
+            z-index: 2147483647 !important;
+        }
+        
+        /* Ensure parent containers don't clip */
+        .row-widget.stButton,
+        div[data-testid="column"] > div {
+            overflow: visible !important;
+            position: relative !important;
+        }
+        
     </style>
     """, unsafe_allow_html=True)
 
@@ -403,3 +446,73 @@ def create_custom_sidebar_menu():
                         st.switch_page(page_path)
                     except Exception as e:
                         st.rerun()
+
+# --- PERMISSION HELPERS ---
+
+def has_permission(permission: str) -> bool:
+    """
+    Kiểm tra xem user hiện tại có quyền cụ thể không.
+    
+    Args:
+        permission: Permission value (string) hoặc Permission enum
+    
+    Returns:
+        True nếu user có quyền, False nếu không
+    """
+    from src.db import get_role_permissions
+    from src.models import UserRole
+    
+    # Lấy user hiện tại
+    user = st.session_state.get("user")
+    if not user:
+        return False
+    
+    # Admin luôn có tất cả quyền
+    user_role = user.get("role", "")
+    if user_role == UserRole.ADMIN.value:
+        return True
+    
+    # Lấy danh sách quyền của role
+    permissions = get_role_permissions(user_role)
+    
+    # Convert permission to string value if it's enum
+    perm_value = permission.value if hasattr(permission, 'value') else permission
+    
+    return perm_value in permissions
+
+def require_permission(permission: str, error_message: str = None):
+    """
+    Yêu cầu user phải có quyền cụ thể để tiếp tục.
+    Nếu không có quyền, hiển thị lỗi và dừng render.
+    
+    Args:
+        permission: Permission value (string) hoặc Permission enum
+        error_message: Thông báo lỗi tùy chỉnh (optional)
+    """
+    if not has_permission(permission):
+        if error_message is None:
+            error_message = "⛔ Bạn không có quyền truy cập chức năng này."
+        st.error(error_message)
+        st.stop()
+
+def get_user_permissions() -> list:
+    """
+    Lấy danh sách tất cả quyền của user hiện tại.
+    
+    Returns:
+        List[str] - danh sách permission values
+    """
+    from src.db import get_role_permissions
+    from src.models import UserRole, Permission
+    
+    user = st.session_state.get("user")
+    if not user:
+        return []
+    
+    user_role = user.get("role", "")
+    
+    # Admin có tất cả quyền
+    if user_role == UserRole.ADMIN.value:
+        return [p.value for p in Permission]
+    
+    return get_role_permissions(user_role)

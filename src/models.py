@@ -50,6 +50,7 @@ class RoomStatus(str, Enum):
     OCCUPIED = "Đang ở"      # Màu đỏ
     DIRTY = "Chưa dọn"       # Màu vàng
     MAINTENANCE = "Bảo trì"  # Màu xám
+    TEMP_LOCKED = "Đang thao tác" # Màu vàng cam (Giữ chỗ tạm thời)
 
 class Room(BaseModel):
     id: str                 # Số phòng: 101, 201
@@ -58,6 +59,10 @@ class Room(BaseModel):
     status: RoomStatus = RoomStatus.AVAILABLE
     note: str = ""
     current_booking_id: Optional[str] = None # Link tới booking đang ở
+    
+    # --- Fields cho cơ chế giữ phòng (Temporary Hold) ---
+    locked_until: Optional[datetime] = None  # Thời điểm hết hạn giữ phòng
+    locked_by: Optional[str] = None          # ID phiên làm việc (Session ID) của người đang giữ
 
     def to_dict(self):
         try: return self.model_dump()
@@ -136,10 +141,176 @@ class UserRole(str, Enum):
     ACCOUNTANT = "accountant"   # Kế toán: Xem báo cáo, không sửa cấu hình
     RECEPTIONIST = "receptionist" # Lễ tân: Check-in/out, không xem báo cáo/settings
 
+class Permission(str, Enum):
+    """Danh sách các quyền chi tiết trong hệ thống"""
+    # Dashboard
+    VIEW_DASHBOARD = "view_dashboard"
+    
+    # Booking
+    VIEW_BOOKING = "view_booking"
+    CREATE_BOOKING = "create_booking"
+    UPDATE_BOOKING = "update_booking"
+    DELETE_BOOKING = "delete_booking"
+    CHECKIN_CHECKOUT = "checkin_checkout"
+    
+    # Finance
+    VIEW_FINANCE = "view_finance"
+    EXPORT_REPORTS = "export_reports"
+    
+    # Services
+    VIEW_SERVICES = "view_services"
+    MANAGE_SERVICES = "manage_services"
+    CREATE_SERVICE_ORDER = "create_service_order"
+    
+    # Settings
+    VIEW_SETTINGS = "view_settings"
+    MANAGE_ROOM_TYPES = "manage_room_types"
+    MANAGE_ROOMS = "manage_rooms"
+    MANAGE_STAFF = "manage_staff"
+    MANAGE_PERMISSIONS = "manage_permissions"
+    MANAGE_SYSTEM_CONFIG = "manage_system_config"
+
+# Cấu hình quyền mặc định cho từng vai trò
+DEFAULT_ROLE_PERMISSIONS = {
+    UserRole.ADMIN: [
+        # Admin có TẤT CẢ quyền
+        Permission.VIEW_DASHBOARD,
+        Permission.VIEW_BOOKING, Permission.CREATE_BOOKING, Permission.UPDATE_BOOKING, 
+        Permission.DELETE_BOOKING, Permission.CHECKIN_CHECKOUT,
+        Permission.VIEW_FINANCE, Permission.EXPORT_REPORTS,
+        Permission.VIEW_SERVICES, Permission.MANAGE_SERVICES, Permission.CREATE_SERVICE_ORDER,
+        Permission.VIEW_SETTINGS, Permission.MANAGE_ROOM_TYPES, Permission.MANAGE_ROOMS,
+        Permission.MANAGE_STAFF, Permission.MANAGE_PERMISSIONS, Permission.MANAGE_SYSTEM_CONFIG,
+    ],
+    UserRole.MANAGER: [
+        # Manager có hầu hết quyền trừ phân quyền và cấu hình hệ thống
+        Permission.VIEW_DASHBOARD,
+        Permission.VIEW_BOOKING, Permission.CREATE_BOOKING, Permission.UPDATE_BOOKING,
+        Permission.DELETE_BOOKING, Permission.CHECKIN_CHECKOUT,
+        Permission.VIEW_FINANCE, Permission.EXPORT_REPORTS,
+        Permission.VIEW_SERVICES, Permission.MANAGE_SERVICES, Permission.CREATE_SERVICE_ORDER,
+        Permission.VIEW_SETTINGS, Permission.MANAGE_ROOM_TYPES, Permission.MANAGE_ROOMS,
+        Permission.MANAGE_STAFF,
+    ],
+    UserRole.ACCOUNTANT: [
+        # Kế toán: Chỉ xem và xuất báo cáo
+        Permission.VIEW_DASHBOARD,
+        Permission.VIEW_BOOKING,
+        Permission.VIEW_FINANCE, Permission.EXPORT_REPORTS,
+        Permission.VIEW_SERVICES,
+    ],
+    UserRole.RECEPTIONIST: [
+        # Lễ tân: Đặt phòng và dịch vụ, không xem tài chính
+        Permission.VIEW_DASHBOARD,
+        Permission.VIEW_BOOKING, Permission.CREATE_BOOKING, Permission.UPDATE_BOOKING,
+        Permission.CHECKIN_CHECKOUT,
+        Permission.VIEW_SERVICES, Permission.CREATE_SERVICE_ORDER,
+    ],
+}
+
+# Metadata cho từng quyền (hiển thị trên UI)
+PERMISSION_METADATA = {
+    # Dashboard
+    Permission.VIEW_DASHBOARD: {
+        "name": "Xem trang Dashboard",
+        "category": "Dashboard",
+        "icon": "📊"
+    },
+    
+    # Booking
+    Permission.VIEW_BOOKING: {
+        "name": "Xem trang Đặt phòng",
+        "category": "Đặt phòng",
+        "icon": "📅"
+    },
+    Permission.CREATE_BOOKING: {
+        "name": "Tạo đặt phòng mới",
+        "category": "Đặt phòng",
+        "icon": "📅"
+    },
+    Permission.UPDATE_BOOKING: {
+        "name": "Sửa đặt phòng",
+        "category": "Đặt phòng",
+        "icon": "📅"
+    },
+    Permission.DELETE_BOOKING: {
+        "name": "Xóa đặt phòng",
+        "category": "Đặt phòng",
+        "icon": "📅"
+    },
+    Permission.CHECKIN_CHECKOUT: {
+        "name": "Check-in / Check-out",
+        "category": "Đặt phòng",
+        "icon": "📅"
+    },
+    
+    # Finance
+    Permission.VIEW_FINANCE: {
+        "name": "Xem trang Tài chính",
+        "category": "Tài chính",
+        "icon": "💰"
+    },
+    Permission.EXPORT_REPORTS: {
+        "name": "Xuất báo cáo",
+        "category": "Tài chính",
+        "icon": "💰"
+    },
+    
+    # Services
+    Permission.VIEW_SERVICES: {
+        "name": "Xem trang Dịch vụ",
+        "category": "Dịch vụ",
+        "icon": "🍽️"
+    },
+    Permission.MANAGE_SERVICES: {
+        "name": "Quản lý menu dịch vụ",
+        "category": "Dịch vụ",
+        "icon": "🍽️"
+    },
+    Permission.CREATE_SERVICE_ORDER: {
+        "name": "Tạo order dịch vụ",
+        "category": "Dịch vụ",
+        "icon": "🍽️"
+    },
+    
+    # Settings
+    Permission.VIEW_SETTINGS: {
+        "name": "Xem trang Cấu hình",
+        "category": "Cấu hình",
+        "icon": "⚙️"
+    },
+    Permission.MANAGE_ROOM_TYPES: {
+        "name": "Quản lý loại phòng",
+        "category": "Cấu hình",
+        "icon": "⚙️"
+    },
+    Permission.MANAGE_ROOMS: {
+        "name": "Quản lý danh sách phòng",
+        "category": "Cấu hình",
+        "icon": "⚙️"
+    },
+    Permission.MANAGE_STAFF: {
+        "name": "Quản lý nhân viên",
+        "category": "Cấu hình",
+        "icon": "⚙️"
+    },
+    Permission.MANAGE_PERMISSIONS: {
+        "name": "Quản lý phân quyền",
+        "category": "Cấu hình",
+        "icon": "⚙️"
+    },
+    Permission.MANAGE_SYSTEM_CONFIG: {
+        "name": "Quản lý cấu hình hệ thống",
+        "category": "Cấu hình",
+        "icon": "⚙️"
+    },
+}
+
 class User(BaseModel):
     username: str             # Email hoặc Tên đăng nhập
     password_hash: str        # Mật khẩu đã hash
     full_name: str
+    phone_number: str = ""    # Số điện thoại
     role: UserRole = UserRole.RECEPTIONIST
     is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.now)

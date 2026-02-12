@@ -21,9 +21,13 @@ from src.db import (
     hash_password,
     get_db,
     get_all_users,
+    get_user,
     update_user_password,
+    get_all_role_permissions,
+    save_role_permissions,
+    init_default_permissions,
 )
-from src.models import Room, RoomStatus, PriceConfig, RoomType, User, UserRole
+from src.models import Room, RoomStatus, PriceConfig, RoomType, User, UserRole, Permission, PERMISSION_METADATA
 from src.ui import apply_sidebar_style, create_custom_sidebar_menu, require_login
 from datetime import date, datetime, timedelta
 
@@ -37,8 +41,8 @@ create_custom_sidebar_menu()
 st.title("⚙️ Cấu hình The Bamboo Resort")
 
 # Sử dụng Tabs để phân chia khu vực quản lý
-tab_types, tab_special_days, tab_rooms, tab_system, tab_staff = st.tabs(
-    ["🏨 Loại Phòng & Giá", "📅 Cấu hình Lễ/Tết & Cuối tuần", "🛏️ Danh sách Phòng", "🛠️ Hệ thống", "👥 Nhân viên"]
+tab_types, tab_special_days, tab_rooms, tab_system, tab_staff, tab_permissions = st.tabs(
+    ["🏨 Loại Phòng & Giá", "📅 Cấu hình Lễ/Tết & Cuối tuần", "🛏️ Danh sách Phòng", "🛠️ Hệ thống", "👥 Nhân viên", "🔐 Phân quyền"]
 )
 
 # --- TAB 1: QUẢN LÝ LOẠI PHÒNG ---
@@ -819,77 +823,115 @@ with tab_staff:
         col_u_form, col_u_list = st.columns([1, 2], gap="medium")
         
         # --- STATE MANAGEMENT ---
-        if "edit_password_user" not in st.session_state:
-            st.session_state["edit_password_user"] = None
+        if "edit_user" not in st.session_state:
+            st.session_state["edit_user"] = None
             
-        edit_pass_user = st.session_state["edit_password_user"]
+        edit_user = st.session_state["edit_user"]
+        is_edit_mode = edit_user is not None
         
-        # 1. Form Thêm/Sửa User HOẶC Đổi Mật Khẩu
+        # 1. Form Thêm/Sửa User
         with col_u_form:
             with st.container(border=True):
-                # MODE 1: ĐỔI MẬT KHẨU
-                if edit_pass_user:
-                    st.subheader(f"🔐 Đổi mật khẩu: {edit_pass_user['username']}")
-                    st.caption("Admin có quyền đặt lại mật khẩu mới cho user này.")
+                form_title = f"✏️ Sửa: {edit_user['username']}" if is_edit_mode else "➕ Thêm Nhân viên"
+                st.subheader(form_title)
+                
+                # Default values
+                d_name = edit_user.get('full_name', '') if is_edit_mode else ''
+                d_email = edit_user.get('username', '') if is_edit_mode else ''
+                d_phone = edit_user.get('phone_number', '') if is_edit_mode else ''
+                d_role = edit_user.get('role', UserRole.RECEPTIONIST) if is_edit_mode else UserRole.RECEPTIONIST
+                d_active = edit_user.get('is_active', True) if is_edit_mode else True
+                
+                with st.form("frm_user"):
+                    u_name = st.text_input("Họ và Tên", value=d_name, placeholder="Nguyễn Văn A")
+                    u_email = st.text_input(
+                        "Tên đăng nhập (Email)", 
+                        value=d_email, 
+                        placeholder="user@bamboo.com",
+                        disabled=is_edit_mode
+                    ).strip()
+                    u_phone = st.text_input("Số điện thoại", value=d_phone, placeholder="0901234567")
                     
-                    with st.form("frm_change_pass"):
-                        new_pass = st.text_input("Mật khẩu mới", type="password")
-                        confirm_pass = st.text_input("Nhập lại mật khẩu", type="password")
-                        
-                        if st.form_submit_button("Xác nhận đổi thay đổi", type="primary"):
-                            if not new_pass:
-                                st.error("Mật khẩu không được để trống!")
-                            elif new_pass != confirm_pass:
-                                st.error("Mật khẩu nhập lại không khớp!")
-                            else:
-                                update_user_password(edit_pass_user['username'], new_pass)
-                                st.toast(f"✅ Đã đổi mật khẩu cho {edit_pass_user['username']}!", icon="🔐")
-                                st.session_state["edit_password_user"] = None
-                                st.rerun()
+                    role_options = {
+                        UserRole.ADMIN: "Quản trị viên (Admin)",
+                        UserRole.MANAGER: "Quản lý (Manager)",
+                        UserRole.ACCOUNTANT: "Kế toán (Accountant)",
+                        UserRole.RECEPTIONIST: "Lễ tân (Receptionist)"
+                    }
+                    
+                    role_list = list(role_options.keys())
+                    try:
+                        if isinstance(d_role, str):
+                            d_role = UserRole(d_role)
+                        role_idx = role_list.index(d_role)
+                    except:
+                        role_idx = 3
+                    
+                    u_role = st.selectbox(
+                        "Vai trò", 
+                        options=role_list, 
+                        format_func=lambda x: role_options[x], 
+                        index=role_idx
+                    )
+                    
+                    u_active = st.checkbox("Tài khoản hoạt động", value=d_active)
+                    
+                    if is_edit_mode:
+                        u_pass = st.text_input(
+                            "Mật khẩu mới", 
+                            type="password", 
+                            placeholder="Để trống nếu không đổi mật khẩu"
+                        )
+                    else:
+                        u_pass = st.text_input(
+                            "Mật khẩu", 
+                            type="password", 
+                            placeholder="Để trống = Mặc định 123456"
+                        )
+                    
+                    btn_label = "💾 Cập nhật" if is_edit_mode else "➕ Lưu Nhân viên"
+                    if st.form_submit_button(btn_label, type="primary"):
+                        if not u_email or not u_name:
+                            st.error("Vui lòng nhập Tên và Email!")
+                        else:
+                            if is_edit_mode:
+                                from src.db import get_user
+                                update_data = {
+                                    "full_name": u_name,
+                                    "phone_number": u_phone,
+                                    "role": u_role.value if hasattr(u_role, 'value') else u_role,
+                                    "is_active": u_active
+                                }
                                 
-                    if st.button("❌ Hủy bỏ", use_container_width=True):
-                        st.session_state["edit_password_user"] = None
-                        st.rerun()
-
-                # MODE 2: THÊM / SỬA USER (Mặc định)
-                else:
-                    st.subheader("➕ Thêm Nhân viên")
-                    with st.form("frm_add_user"):
-                        u_name = st.text_input("Họ và Tên", placeholder="Nguyễn Văn A")
-                        u_email = st.text_input("Tên đăng nhập (Email)", placeholder="user@bamboo.com").strip()
-                        
-                        role_options = {
-                            UserRole.ADMIN: "Quản trị viên (Admin)",
-                            UserRole.MANAGER: "Quản lý (Manager)",
-                            UserRole.ACCOUNTANT: "Kế toán (Accountant)",
-                            UserRole.RECEPTIONIST: "Lễ tân (Receptionist)"
-                        }
-                        # Default Receptionist (index 3 of values)
-                        u_role = st.selectbox("Vai trò", options=list(role_options.keys()), format_func=lambda x: role_options[x], index=3)
-                        
-                        u_pass = st.text_input("Mật khẩu", type="password", placeholder="Để trống = Mặc định 123456")
-                        
-                        if st.form_submit_button("Lưu Nhân viên", type="primary"):
-                            if not u_email or not u_name:
-                                st.error("Vui lòng nhập Tên và Email!")
-                            else:
-                                # Check exist? simple check
-                                existing = get_all_users()
-                                is_exist = any(u['username'] == u_email for u in existing)
+                                if u_pass:
+                                    update_data["password_hash"] = hash_password(u_pass)
                                 
+                                existing_user = get_user(u_email)
+                                if existing_user:
+                                    existing_user.update(update_data)
+                                    create_user(existing_user)
+                                    st.toast(f"✅ Đã cập nhật thông tin {u_name}!", icon="🎉")
+                                    st.session_state["edit_user"] = None
+                                    st.rerun()
+                            else:
                                 raw_pass = u_pass if u_pass else "123456"
                                 
                                 new_user = User(
                                     username=u_email,
                                     password_hash=hash_password(raw_pass),
                                     full_name=u_name,
+                                    phone_number=u_phone,
                                     role=u_role,
-                                    is_active=True
+                                    is_active=u_active
                                 )
                                 create_user(new_user.to_dict())
-                                msg = "Cập nhật" if is_exist else "Thêm mới"
-                                st.toast(f"✅ {msg} nhân viên {u_name}!", icon="🎉")
+                                st.toast(f"✅ Đã thêm nhân viên {u_name}!", icon="🎉")
                                 st.rerun()
+                
+                if is_edit_mode:
+                    if st.button("❌ Hủy bỏ", use_container_width=True):
+                        st.session_state["edit_user"] = None
+                        st.rerun()
 
         # 2. Danh sách User
         with col_u_list:
@@ -930,25 +972,176 @@ with tab_staff:
                             c4.markdown("✅" if is_act else "❌")
                             
                             with c5:
-                                b_key, b_del = st.columns([1, 1], gap="small")
+                                b_edit, b_del = st.columns([1, 1], gap="small")
                                 
-                                # Nút đổi mật khẩu (Key Icon)
-                                if b_key.button("🔐", key=f"key_{u['username']}", help="Đổi mật khẩu"):
-                                    st.session_state["edit_password_user"] = u
-                                    st.rerun()
-                                    
-                                if b_del.button("🗑️", key=f"del_{u['username']}", help="Xóa tài khoản"):
-                                    # Prevent delete self
-                                    if u['username'] == current_user.get("username"):
-                                        st.toast("Không thể tự xóa chính mình!", icon="⚠️")
-                                    else:
-                                        delete_user(u['username'])
-                                        # Clear edit state if deleting the user being edited
-                                        if edit_pass_user and edit_pass_user['username'] == u['username']:
-                                            st.session_state["edit_password_user"] = None
+                                # Nút sửa với text rõ ràng
+                                with b_edit:
+                                    if st.button("✏️ Sửa", key=f"edit_{u['username']}", use_container_width=True):
+                                        st.session_state["edit_user"] = u
                                         st.rerun()
+                                    
+                                with b_del:
+                                    if st.button("🗑️ Xóa", key=f"del_{u['username']}", use_container_width=True):
+                                        if u['username'] == current_user.get("username"):
+                                            st.toast("Không thể tự xóa chính mình!", icon="⚠️")
+                                        else:
+                                            delete_user(u['username'])
+                                            if edit_user and edit_user['username'] == u['username']:
+                                                st.session_state["edit_user"] = None
+                                            st.rerun()
                             st.markdown('<hr style="margin: 2px 0; border-top: 1px solid #eee;">', unsafe_allow_html=True)
                 except Exception as e:
                     st.error(f"Lỗi hiển thị danh sách: {e}")
             else:
                 st.info("Chưa có nhân viên nào. Hãy thêm ở cột bên trái.")
+
+# --- TAB 6: QUẢN LÝ PHÂN QUYỀN ---
+with tab_permissions:
+    st.subheader("🔐 Quản lý Phân quyền Chi tiết")
+    
+    # Check permissions - Chỉ Admin mới được quản lý phân quyền
+    current_user = st.session_state.get("user", {})
+    is_admin = current_user.get("role") == UserRole.ADMIN
+    
+    if not is_admin:
+        st.error("⛔ Bạn không có quyền truy cập khu vực này. Chỉ Admin mới được quản lý phân quyền.")
+    else:
+        # Khởi tạo phân quyền mặc định nếu chưa có
+        init_default_permissions()
+        
+        st.info("""
+        **Hướng dẫn:** Chọn vai trò bên dưới, sau đó tick ✅ vào các quyền mà vai trò đó được phép sử dụng.
+        Admin luôn có tất cả quyền và không thể thay đổi.
+        """)
+        
+        # Dropdown chọn vai trò
+        role_options = {
+            UserRole.ADMIN: "👑 Quản trị viên (Admin)",
+            UserRole.MANAGER: "👔 Quản lý (Manager)",
+            UserRole.ACCOUNTANT: "💼 Kế toán (Accountant)",
+            UserRole.RECEPTIONIST: "🛎️ Lễ tân (Receptionist)"
+        }
+        
+        selected_role = st.selectbox(
+            "Chọn vai trò để cấu hình:",
+            options=list(role_options.keys()),
+            format_func=lambda x: role_options[x],
+            index=1  # Default: Manager
+        )
+        
+        # Lấy cấu hình hiện tại
+        all_perms = get_all_role_permissions()
+        current_perms = set(all_perms.get(selected_role.value, []))
+        
+        # Admin không thể thay đổi
+        if selected_role == UserRole.ADMIN:
+            st.warning("⚠️ Admin luôn có toàn bộ quyền. Không thể thay đổi cấu hình.")
+            
+            # Hiển thị danh sách quyền của Admin (read-only)
+            st.markdown("#### Quyền của Admin:")
+            all_permission_values = [p.value for p in Permission]
+            
+            # Nhóm theo category
+            categories = {}
+            for perm_enum in Permission:
+                meta = PERMISSION_METADATA.get(perm_enum, {})
+                cat = meta.get("category", "Khác")
+                if cat not in categories:
+                    categories[cat] = []
+                categories[cat].append(perm_enum)
+            
+            for cat_name, perms in categories.items():
+                icon = PERMISSION_METADATA.get(perms[0], {}).get("icon", "")
+                st.markdown(f"##### {icon} {cat_name}")
+                for perm in perms:
+                    meta = PERMISSION_METADATA.get(perm, {})
+                    name = meta.get("name", perm.value)
+                    st.markdown(f"✅ {name}")
+        
+        else:
+            # Form để cấu hình quyền
+            with st.form(f"frm_permissions_{selected_role.value}"):
+                st.markdown(f"### Cấu hình quyền cho: {role_options[selected_role]}")
+                
+                # Tạo dict để lưu trạng thái checkbox
+                new_permissions = set()
+                
+                # Nhóm quyền theo category
+                categories = {}
+                for perm_enum in Permission:
+                    meta = PERMISSION_METADATA.get(perm_enum, {})
+                    cat = meta.get("category", "Khác")
+                    if cat not in categories:
+                        categories[cat] = []
+                    categories[cat].append(perm_enum)
+                
+                # Render checkbox theo từng category
+                for cat_name, perms in categories.items():
+                    # Get icon from first permission in category
+                    icon = PERMISSION_METADATA.get(perms[0], {}).get("icon", "")
+                    st.markdown(f"##### {icon} {cat_name}")
+                    
+                    # Tạo 2 cột để hiển thị checkbox gọn hơn
+                    cols = st.columns(2)
+                    for idx, perm in enumerate(perms):
+                        meta = PERMISSION_METADATA.get(perm, {})
+                        name = meta.get("name", perm.value)
+                        
+                        # Check xem quyền này có trong cấu hình hiện tại không
+                        is_checked = perm.value in current_perms
+                        
+                        # Hiển thị checkbox
+                        col = cols[idx % 2]
+                        with col:
+                            checked = st.checkbox(
+                                name,
+                                value=is_checked,
+                                key=f"perm_{selected_role.value}_{perm.value}"
+                            )
+                            
+                            if checked:
+                                new_permissions.add(perm.value)
+                    
+                    st.markdown("---")
+                
+                # Nút lưu
+                col_save, col_reset = st.columns([1, 1])
+                
+                with col_save:
+                    submitted = st.form_submit_button("💾 Lưu cấu hình", type="primary", use_container_width=True)
+                
+                with col_reset:
+                    reset = st.form_submit_button("🔄 Reset về mặc định", type="secondary", use_container_width=True)
+                
+                if submitted:
+                    # Lưu cấu hình mới
+                    save_role_permissions(selected_role.value, list(new_permissions))
+                    st.success(f"✅ Đã lưu cấu hình phân quyền cho {role_options[selected_role]}!")
+                    st.rerun()
+                
+                if reset:
+                    # Reset về cấu hình mặc định
+                    from src.models import DEFAULT_ROLE_PERMISSIONS
+                    default_perms = DEFAULT_ROLE_PERMISSIONS.get(selected_role, [])
+                    perm_values = [p.value if hasattr(p, 'value') else p for p in default_perms]
+                    save_role_permissions(selected_role.value, perm_values)
+                    st.success(f"✅ Đã reset về cấu hình mặc định cho {role_options[selected_role]}!")
+                    st.rerun()
+        
+        # Hiển thị tóm tắt cấu hình hiện tại của tất cả vai trò
+        st.divider()
+        st.markdown("### 📋 Tổng quan Phân quyền Hiện tại")
+        
+        summary_data = []
+        for role_enum in UserRole:
+            role = role_enum.value
+            perms = all_perms.get(role, [])
+            summary_data.append({
+                "Vai trò": role_options.get(role_enum, role),
+                "Số quyền": len(perms),
+                "Chi tiết": ", ".join([PERMISSION_METADATA.get(Permission(p), {}).get("name", p) for p in perms[:3]]) + ("..." if len(perms) > 3 else "")
+            })
+        
+        import pandas as pd
+        df_summary = pd.DataFrame(summary_data)
+        st.dataframe(df_summary, use_container_width=True, hide_index=True)
