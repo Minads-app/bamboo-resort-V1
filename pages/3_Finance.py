@@ -3,12 +3,13 @@ import pandas as pd
 from datetime import datetime, date, time, timedelta
 
 from src.db import get_completed_bookings, get_all_rooms, get_all_room_types
-from src.ui import apply_sidebar_style, create_custom_sidebar_menu
+from src.models import Permission
+from src.ui import apply_sidebar_style, create_custom_sidebar_menu, require_login, require_permission, has_permission
 
 st.set_page_config(page_title="Báo cáo doanh thu", layout="wide")
 
-from src.ui import require_login
 require_login()
+require_permission(Permission.VIEW_FINANCE)
 
 apply_sidebar_style()
 create_custom_sidebar_menu()
@@ -162,15 +163,19 @@ else:
     df_display = pd.DataFrame(columns=["STT", "Thời gian Check-in", "Thời gian Check-out", "Mã Bill", "Phòng", "Tiền dịch vụ", "Tên khách hàng", "Số tiền", "Phương thức", "Ghi chú"])
 
 # Buttons
-csv_data = df_display.to_csv(index=False).encode("utf-8-sig")
-c_btn2.download_button(
-    "📥 Xuất Excel (.csv)",
-    data=csv_data,
-    file_name=f"DoanhThu_{d_from.strftime('%Y%m%d')}_{d_to.strftime('%Y%m%d')}.csv",
-    mime="text/csv",
-    use_container_width=True,
-    disabled=df.empty
-)
+if has_permission(Permission.EXPORT_REPORTS):
+    csv_data = df_display.to_csv(index=False).encode("utf-8-sig")
+    c_btn2.download_button(
+        "📥 Xuất Excel (.csv)",
+        data=csv_data,
+        file_name=f"DoanhThu_{d_from.strftime('%Y%m%d')}_{d_to.strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        use_container_width=True,
+        disabled=df.empty
+    )
+else:
+    c_btn2.button("📥 Xuất Excel (.csv)", disabled=True, key="btn_export_disabled", help="Bạn không có quyền xuất báo cáo")
+
 
 # Print Logic
 def generate_print_html(dataframe, d_s, d_e):
@@ -190,9 +195,12 @@ def generate_print_html(dataframe, d_s, d_e):
     <tbody>{html_rows}</tbody></table></body></html>"""
 
 import streamlit.components.v1 as components
-if not df.empty and c_btn3.button("🖨️ In Báo Cáo", use_container_width=True):
-    html = generate_print_html(df_display, d_from, d_to)
-    components.html(html, height=0, width=0)
+if has_permission(Permission.EXPORT_REPORTS):
+    if not df.empty and c_btn3.button("🖨️ In Báo Cáo", use_container_width=True):
+        html = generate_print_html(df_display, d_from, d_to)
+        components.html(html, height=0, width=0)
+else:
+    c_btn3.button("🖨️ In Báo Cáo", disabled=True, key="btn_print_disabled")
 
 if c_btn1.button("👁️ Xem / Làm mới", use_container_width=True):
     st.rerun()

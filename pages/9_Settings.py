@@ -28,7 +28,7 @@ from src.db import (
     init_default_permissions,
 )
 from src.models import Room, RoomStatus, PriceConfig, RoomType, User, UserRole, Permission, PERMISSION_METADATA
-from src.ui import apply_sidebar_style, create_custom_sidebar_menu, require_login
+from src.ui import apply_sidebar_style, create_custom_sidebar_menu, require_login, has_permission
 from datetime import date, datetime, timedelta
 
 st.set_page_config(page_title="Cấu hình hệ thống", layout="wide")
@@ -69,13 +69,22 @@ components.html("""
     let formatting = false;
 
     function formatNum(n) {
-        return n.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
+        return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     }
 
     function handleInput(input) {
         if (formatting) return;
+        
+        // 1. Check Keywords in Label (aria-label)
+        const label = (input.getAttribute('aria-label') || '').toLowerCase();
+        const skipKeywords = ['điện thoại', 'phone', 'sđt', 'mật khẩu', 'password', 'tài khoản', 'account', 'mã', 'id', 'cccd', 'cmnd'];
+        if (skipKeywords.some(kw => label.includes(kw))) return;
+
         const raw = input.value.replace(/[,\\s]/g, '');
         if (!/^\\d*$/.test(raw) || raw === '') return;
+
+        // 2. Check leading zero (Save phone numbers if keyword check fails)
+        if (raw.length > 1 && raw.startsWith('0')) return;
 
         const formatted = raw === '0' ? '0' : formatNum(raw.replace(/^0+/, '') || '0');
         if (formatted === input.value) return;
@@ -97,9 +106,21 @@ components.html("""
     function setup() {
         doc.querySelectorAll('input[type="text"]').forEach(input => {
             if (input.dataset.priceFmt) return;
+            
+            // Initial Check for Skip
+            const label = (input.getAttribute('aria-label') || '').toLowerCase();
+            const skipKeywords = ['điện thoại', 'phone', 'sđt', 'mật khẩu', 'password', 'tài khoản', 'account', 'mã', 'id', 'cccd', 'cmnd'];
+            if (skipKeywords.some(kw => label.includes(kw))) {
+                input.dataset.priceFmt = 'skipped'; // Mark as checked/skipped
+                return;
+            }
+
             // Chỉ format ô có nội dung là số thuần
             const clean = input.value.replace(/[,\\s]/g, '');
             if (!/^\\d+$/.test(clean)) return;
+
+            // Check leading zero
+            if (clean.length > 1 && clean.startsWith('0')) return;
 
             input.dataset.priceFmt = '1';
             input.addEventListener('input', () => handleInput(input));
@@ -727,6 +748,26 @@ with tab_rooms:
                         index=list(type_options.keys()).index(d_type) if d_type in type_options else 0
                     )
                     r_floor = st.text_input("Khu vực", value=d_floor, placeholder="VD: Tầng 1, Khu A...").strip()
+                    
+                    # Thêm chọn trạng thái bảo trì
+                    status_opts = [RoomStatus.AVAILABLE, RoomStatus.MAINTENANCE]
+                    status_labels = {
+                        RoomStatus.AVAILABLE: "✅ Sẵn sàng đón khách",
+                        RoomStatus.MAINTENANCE: "🔧 Đang bảo trì / Sửa chữa"
+                    }
+                    
+                    # Nếu đang edit và status hiện tại không nằm trong list trên (VD: OCCUPIED), thêm vào để hiển thị
+                    current_stt = edit_room_data.get("status", RoomStatus.AVAILABLE) if is_edit_room else RoomStatus.AVAILABLE
+                    if current_stt not in status_opts:
+                        status_opts.append(current_stt)
+                        status_labels[current_stt] = f"⚠️ {current_stt} (Đang có khách?)"
+
+                    r_status = st.selectbox(
+                        "Trạng thái",
+                        options=status_opts,
+                        format_func=lambda x: status_labels.get(x, x),
+                        index=status_opts.index(current_stt) if current_stt in status_opts else 0
+                    )
 
                     btn_lbl = "💾 Cập nhật" if is_edit_room else "Lưu Phòng"
                     if st.form_submit_button(btn_lbl, type="primary"):
@@ -735,14 +776,16 @@ with tab_rooms:
                                 id=r_id,
                                 room_type_code=r_type_code,
                                 floor=r_floor or "Khu vực 1",
-                                status=RoomStatus.AVAILABLE, # Khôi phục status mặc định hoặc giữ nguyên?
-                                # Thực tế nếu edit, ta nên giữ nguyên status cũ trừ khi muốn reset
+                                status=r_status, 
                             )
-                            # Nếu đang edit, giữ status cũ
+                            # Nếu đang edit, giữ lại các field khác
                             if is_edit_room:
-                                new_room.status = edit_room_data.get("status", RoomStatus.AVAILABLE)
                                 new_room.current_booking_id = edit_room_data.get("current_booking_id")
                                 new_room.note = edit_room_data.get("note", "")
+                                # Nếu status chọn là AVAILABLE, có thể cần clear current_booking_id? 
+                                # An toàn: Nếu chuyển sang Maintenance, giữ nguyên booking id (nếu có) để sau này check lại, 
+                                # nhưng thường bảo trì là phòng trống. 
+                                # Tạm thời chỉ update status.
 
                             save_room_to_db(new_room.to_dict())
                             msg = "Cập nhật" if is_edit_room else "Thêm mới"
@@ -934,10 +977,8 @@ with tab_staff:
     
     # Check permissions
     current_user = st.session_state.get("user", {})
-    is_admin = current_user.get("role") == UserRole.ADMIN
-    
-    if not is_admin:
-        st.error("⛔ Bạn không có quyền truy cập khu vực này. Chỉ Admin mới được quản lý nhân viên.")
+    if not has_permission(Permission.MANAGE_STAFF):
+        st.error("⛔ Bạn không có quyền truy cập khu vực này. Cần quyền 'Quản lý nhân viên'.")
     else:
         col_u_form, col_u_list = st.columns([1, 2], gap="medium")
         
@@ -978,13 +1019,19 @@ with tab_staff:
                         UserRole.RECEPTIONIST: "Lễ tân (Receptionist)"
                     }
                     
+                    # RESTRICTION: Non-Admin cannot assign Admin role
+                    current_role = current_user.get("role")
+                    if current_role != UserRole.ADMIN:
+                        if UserRole.ADMIN in role_options:
+                            del role_options[UserRole.ADMIN]
+
                     role_list = list(role_options.keys())
                     try:
                         if isinstance(d_role, str):
                             d_role = UserRole(d_role)
                         role_idx = role_list.index(d_role)
                     except:
-                        role_idx = 3
+                        role_idx = len(role_list) - 1 if role_list else 0
                     
                     u_role = st.selectbox(
                         "Vai trò", 
@@ -1093,21 +1140,33 @@ with tab_staff:
                             with c5:
                                 b_edit, b_del = st.columns([1, 1], gap="small")
                                 
+                                # RESTRICTION: Non-Admin cannot edit/delete Admin
+                                is_target_admin = (r == "admin" or r == UserRole.ADMIN)
+                                can_modify = True
+                                if is_target_admin and current_user.get("role") != UserRole.ADMIN:
+                                    can_modify = False
+
                                 # Nút sửa với text rõ ràng
                                 with b_edit:
-                                    if st.button("✏️ Sửa", key=f"edit_{u['username']}", use_container_width=True):
-                                        st.session_state["edit_user"] = u
-                                        st.rerun()
+                                    if can_modify:
+                                        if st.button("✏️ Sửa", key=f"edit_{u['username']}", use_container_width=True):
+                                            st.session_state["edit_user"] = u
+                                            st.rerun()
+                                    else:
+                                         st.button("🔒", key=f"lk_e_{u['username']}", disabled=True, use_container_width=True, help="Chỉ Admin mới được sửa tài khoản Admin")
                                     
                                 with b_del:
-                                    if st.button("🗑️ Xóa", key=f"del_{u['username']}", use_container_width=True):
-                                        if u['username'] == current_user.get("username"):
-                                            st.toast("Không thể tự xóa chính mình!", icon="⚠️")
-                                        else:
-                                            delete_user(u['username'])
-                                            if edit_user and edit_user['username'] == u['username']:
-                                                st.session_state["edit_user"] = None
-                                            st.rerun()
+                                    if can_modify:
+                                        if st.button("🗑️ Xóa", key=f"del_{u['username']}", use_container_width=True):
+                                            if u['username'] == current_user.get("username"):
+                                                st.toast("Không thể tự xóa chính mình!", icon="⚠️")
+                                            else:
+                                                delete_user(u['username'])
+                                                if edit_user and edit_user['username'] == u['username']:
+                                                    st.session_state["edit_user"] = None
+                                                st.rerun()
+                                    else:
+                                         st.button("🔒", key=f"lk_d_{u['username']}", disabled=True, use_container_width=True)
                             st.markdown('<hr style="margin: 2px 0; border-top: 1px solid #eee;">', unsafe_allow_html=True)
                 except Exception as e:
                     st.error(f"Lỗi hiển thị danh sách: {e}")
@@ -1119,11 +1178,8 @@ with tab_permissions:
     st.subheader("🔐 Quản lý Phân quyền Chi tiết")
     
     # Check permissions - Chỉ Admin mới được quản lý phân quyền
-    current_user = st.session_state.get("user", {})
-    is_admin = current_user.get("role") == UserRole.ADMIN
-    
-    if not is_admin:
-        st.error("⛔ Bạn không có quyền truy cập khu vực này. Chỉ Admin mới được quản lý phân quyền.")
+    if not has_permission(Permission.MANAGE_PERMISSIONS):
+        st.error("⛔ Bạn không có quyền truy cập khu vực này. Cần quyền 'Quản lý phân quyền'.")
     else:
         # Khởi tạo phân quyền mặc định nếu chưa có
         init_default_permissions()

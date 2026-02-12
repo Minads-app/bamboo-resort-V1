@@ -10,13 +10,13 @@ from src.db import (
     get_active_bookings_dict,
     get_system_update_counter,
 )
-from src.models import RoomStatus
-from src.ui import apply_sidebar_style, create_custom_sidebar_menu
+from src.models import RoomStatus, Permission
+from src.ui import apply_sidebar_style, create_custom_sidebar_menu, require_login, require_permission
 
 st.set_page_config(page_title="Sơ đồ phòng", layout="wide")
 
-from src.ui import require_login
 require_login()
+require_permission(Permission.VIEW_DASHBOARD)
 
 apply_sidebar_style()
 create_custom_sidebar_menu()
@@ -127,20 +127,25 @@ with col_pending:
                 if status_raw != "confirmed" and booking_id:
                     c1, c2 = st.columns([1, 1])
                     with c1:
-                        clicked = st.button(
-                            "✅ Xác nhận đã nhận tiền",
-                            key=f"confirm_online_{booking_id}",
-                            use_container_width=True,
-                        )
-                        if clicked:
-                            ok, msg = confirm_online_booking(booking_id)
-                            if ok:
-                                st.success(
-                                    "Đã xác nhận đã nhận tiền. Booking đã được cập nhật."
-                                )
-                                st.rerun()
-                            else:
-                                st.error(f"Lỗi khi xác nhận: {msg}")
+                        # Check permission for update
+                        from src.ui import has_permission
+                        if has_permission(Permission.UPDATE_BOOKING):
+                            clicked = st.button(
+                                "✅ Xác nhận đã nhận tiền",
+                                key=f"confirm_online_{booking_id}",
+                                use_container_width=True,
+                            )
+                            if clicked:
+                                ok, msg = confirm_online_booking(booking_id)
+                                if ok:
+                                    st.success(
+                                        "Đã xác nhận đã nhận tiền. Booking đã được cập nhật."
+                                    )
+                                    st.rerun()
+                                else:
+                                    st.error(f"Lỗi khi xác nhận: {msg}")
+                        else:
+                             st.caption("🔒 Cần quyền sửa booking")
                     with c2:
                         st.caption(
                             "Sau khi xác nhận, booking sẽ không còn trong danh sách chờ."

@@ -13,14 +13,14 @@ from src.db import (
     calculate_service_total,
     get_orders_by_booking,
 )
-from src.models import RoomStatus
+from src.models import RoomStatus, Permission
 from src.logic import calculate_estimated_price, BookingType
-from src.ui import apply_sidebar_style, create_custom_sidebar_menu
+from src.ui import apply_sidebar_style, create_custom_sidebar_menu, require_login, require_permission, has_permission
 
 st.set_page_config(page_title="Trả phòng & Thanh toán", layout="wide")
 
-from src.ui import require_login
 require_login()
+require_permission(Permission.CHECKIN_CHECKOUT)
 
 apply_sidebar_style()
 create_custom_sidebar_menu()
@@ -364,9 +364,8 @@ with col_bill:
     
     # --- HÓA ĐƠN CHI TIẾT ---
     # Get current user role for permission check
-    current_user = st.session_state.get("user", {})
-    user_role = current_user.get("role", "receptionist")
-    is_manager_or_above = user_role in ["admin", "manager"]
+    # Check permission for discount (Manager/Admin typically)
+    can_discount = has_permission(Permission.MANAGE_ROOMS)
     
     # 1. Tiền phòng - hiển thị
     c1, c2 = st.columns([2, 1])
@@ -379,8 +378,8 @@ with col_bill:
     c4.write(f"**{int(calc_service_fee):,} đ**")
     
     # 3. Giảm giá (Manager only)
-    discount = 0
-    if is_manager_or_above:
+    discount = 0.0
+    if can_discount:
         discount = st.number_input(
             "Giảm giá (Chỉ Quản lý):", 
             value=0, 
@@ -412,7 +411,11 @@ with col_bill:
         payment_method = st.radio("Phương thức thanh toán:", ["Tiền mặt", "Chuyển khoản", "Thẻ"], horizontal=True)
         note = st.text_area("Ghi chú hóa đơn (nếu có)")
         
-        submitted = st.form_submit_button("💰 XÁC NHẬN THANH TOÁN & TRẢ PHÒNG", type="primary", use_container_width=True)
+        submitted = False
+        if has_permission(Permission.CHECKIN_CHECKOUT):
+             submitted = st.form_submit_button("💰 XÁC NHẬN THANH TOÁN & TRẢ PHÒNG", type="primary", use_container_width=True)
+        else:
+             st.error("⛔ Bạn không có quyền thực hiện thanh toán.")
         
         if submitted:
             # Use calculated values from outside form

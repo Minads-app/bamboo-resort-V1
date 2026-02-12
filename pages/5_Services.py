@@ -3,17 +3,20 @@ import pandas as pd
 from datetime import datetime
 import uuid
 
-from src.models import ServiceItem, ServiceCategory, ServiceOrder, RoomStatus
+from src.models import ServiceItem, ServiceCategory, ServiceOrder, RoomStatus, Permission
 from src.db import (
     get_all_services, save_service, delete_service,
     get_occupied_rooms, add_service_order, get_orders_by_booking,
     get_all_rooms, get_recent_service_orders
 )
-from src.ui import apply_sidebar_style, create_custom_sidebar_menu, require_login
+from src.ui import apply_sidebar_style, create_custom_sidebar_menu, require_login, require_permission, has_permission
 
 # --- CONFIG & LAYOUT ---
 st.set_page_config(page_title="Dịch vụ & Ăn uống", layout="wide")
+
 require_login()
+require_permission(Permission.VIEW_SERVICES)
+
 apply_sidebar_style()
 create_custom_sidebar_menu()
 
@@ -101,7 +104,9 @@ with tab_order:
             note = st.text_input("Ghi chú (Không cay, ít đá...)", key="order_note")
 
             if st.button("✅ Gửi Order / Báo Bếp", type="primary", use_container_width=True):
-                if not s_room_id:
+                if not has_permission(Permission.CREATE_SERVICE_ORDER):
+                    st.error("⛔ Bạn không có quyền tạo order.")
+                elif not s_room_id:
                     st.error("Chưa chọn phòng!")
                 elif not cart:
                     st.error("Giỏ hàng trống!")
@@ -214,8 +219,7 @@ with tab_menu:
     # Check permisison (Optional: Manager/Admin only?)
     # For now allow all staff to edit menu for simplicity or restriction?
     # Let's restrict to Admin/Manager
-    curr_user = st.session_state.get("user", {})
-    if curr_user.get("role") not in ["admin", "manager"]:
+    if not has_permission(Permission.MANAGE_SERVICES):
         st.warning("🔒 Chỉ Quản lý mới được chỉnh sửa Menu.")
     else:
         cm_left, cm_right = st.columns([1, 2])

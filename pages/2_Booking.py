@@ -1,14 +1,14 @@
 import streamlit as st
 from datetime import datetime, timedelta
 from src.db import get_all_rooms, get_all_room_types, create_booking, get_db, find_customer_by_phone, hold_room, release_room_hold # New
-from src.models import Booking, BookingType, RoomStatus, BookingStatus
+from src.models import Booking, BookingType, RoomStatus, BookingStatus, Permission
 from src.logic import calculate_estimated_price
-from src.ui import apply_sidebar_style, create_custom_sidebar_menu
+from src.ui import apply_sidebar_style, create_custom_sidebar_menu, require_login, require_permission, has_permission
 
 st.set_page_config(page_title="Đặt phòng", layout="wide")
 
-from src.ui import require_login
 require_login()
+require_permission(Permission.VIEW_BOOKING)
 
 apply_sidebar_style()
 create_custom_sidebar_menu()
@@ -397,64 +397,51 @@ with st.container(border=True):
         is_checkin_now = st.checkbox("Check-in ngay?", value=True)
         btn_label = "✅ CHECK-IN" if is_checkin_now else "💾 LƯU"
         
-        if st.button(btn_label, type="primary", use_container_width=True):
-            if not c_name:
-                st.error("Thiếu tên khách!")
-            elif not c_phone:
-                st.error("Thiếu số điện thoại!")
-            elif check_out_time <= check_in_time:
-                st.error("Giờ ra sai!")
-            else:
-                # Loop create bookings
-                success_count = 0
-                created_ids = []
-                
-                # Split deposit per room? Or assign to first? 
-                # Let's split evenly or assign to first. Simpler: Assign to first room, others 0?
-                # A better way: Store verify deposit for the Group? 
-                # For now: Avg deposit per room to keep data simple
-                avg_deposit = deposit / len(selected_rooms) if selected_rooms else 0
-
-                for rid in selected_rooms:
-                    # Recalculate price for specific room (just to be safe)
-                    ro = next((r for r in available_rooms if r['id'] == rid), None)
-                    if ro:
-                        ti = type_map.get(ro['room_type_code'], {})
-                        price_cfg = get_applicable_price_config(check_in_time.date(), ti, system_config)
-                        p_room = calculate_estimated_price(check_in_time, check_out_time, booking_mode, price_cfg)
-                        
-                        new_bk = Booking(
-                            room_id=rid,
-                            customer_name=c_name,
-                            customer_phone=c_phone,
-                            customer_type=c_type,
-                            booking_type=booking_mode,
-                            check_in=check_in_time,
-                            check_out_expected=check_out_time,
-                            price_original=p_room,
-                            deposit=avg_deposit # Split deposit
-                        )
-                        suc, rez_id = create_booking(new_bk, is_checkin_now)
-                        if suc:
-                            success_count += 1
-                            created_ids.append(rez_id)
-                
-                if success_count == len(selected_rooms):
-                    # Success All
-                    # Show summary bill for ALL
-                    
-                    st.session_state["booking_success_data"] = {
-                        "booking_id": ", ".join(created_ids),
-                        "room_id": ", ".join(selected_rooms),
-                        "customer_name": c_name,
-                        "customer_phone": c_phone,
-                        "booking_type": booking_mode.value,
-                        "check_in": check_in_time,
-                        "check_out": check_out_time,
-                        "price": total_est_price,
-                        "deposit": deposit,
-                        "status_text": "Đã nhận phòng" if is_checkin_now else "Đặt trước"
-                    }
-                    st.rerun()
+        if has_permission(Permission.CREATE_BOOKING):
+            if st.button(btn_label, type="primary", use_container_width=True):
+                if not c_name:
+                    st.error("Thiếu tên khách!")
+                elif not c_phone:
+                    st.error("Thiếu số điện thoại!")
+                elif check_out_time <= check_in_time:
+                    st.error("Giờ ra sai!")
                 else:
-                    st.error(f"Có lỗi xảy ra! Chỉ tạo được {success_count}/{len(selected_rooms)} phòng.")
+                    success_count = 0
+                    created_ids = []
+                    
+                    # Avg deposit
+                    avg_deposit = deposit / len(selected_rooms) if selected_rooms and deposit else 0
+
+                    for rid in selected_rooms:
+                        # Recalculate price
+                        ro = next((r for r in available_rooms if r['id'] == rid), None)
+                        if ro:
+                            ti = type_map.get(ro['room_type_code'], {})
+                            price_cfg = get_applicable_price_config(check_in_time.date(), ti, system_config)
+                            p_room = calculate_estimated_price(check_in_time, check_out_time, booking_mode, price_cfg)
+                            
+                            new_bk = Booking(
+                                room_id=rid,
+                                customer_name=c_name,
+                                customer_phone=c_phone,
+                                customer_type=c_type,
+                                booking_type=booking_mode,
+                                check_in=check_in_time,
+                                check_out_expected=check_out_time,
+                                price_original=p_room,
+                                deposit=avg_deposit,
+                                status=BookingStatus.CHECKED_IN if is_checkin_now else BookingStatus.CONFIRMED,
+                                source="direct"
+                            )
+                            suc, rez_id = create_booking(new_bk.to_dict())
+                            if suc:
+                                success_count += 1
+                                created_ids.append(rez_id)
+                    
+                    if success_count == len(selected_rooms):
+                         st.success(f"Đã tạo {success_count} booking thành công!")
+                         # Clear state
+                         st.session_state["selected_rooms"] = []
+                         st.rerun()
+                    else:
+                        st.error(f"Có lỗi xảy ra! Chỉ tạo được {success_count}/{len(selected_rooms)} phòng.")
