@@ -10,7 +10,14 @@ import extra_streamlit_components as stx
 from datetime import datetime, timedelta
 
 def get_manager():
-    return stx.CookieManager()
+    # Use key to ensure uniqueness if needed, but session state cache is better
+    # Note: re-initializing CookieManager with same key is usually fine, 
+    # but let's try to keep it in a variable if feasible, or just return component.
+    # Actually, stx.CookieManager() is a component call. It needs to be in the layout.
+    # Calling it multiple times renders multiple iframes.
+    # We should stick to one call per run if possible, or simple idempotent call.
+    # Best practice with stx is often:
+    return stx.CookieManager(key="auth_cookie_manager")
 
 def load_custom_css():
     """Load global CSS from methods"""
@@ -90,10 +97,11 @@ def login_form(cookie_manager=None):
                     cookie_manager.set("auth_token", token, expires_at=datetime.now() + timedelta(days=7))
                     
                     st.success(f"Chào mừng {user.get('full_name')}!")
-                    time.sleep(0.5)
+                    # Increase sleep to ensure cookie is set on frontend before rerun
+                    time.sleep(1.0) 
                     st.rerun()
                 else:
-                    st.error("Sai tên đăng nhập hoặc mật khẩu!")
+                    st.error(f"Sai tên đăng nhập hoặc mật khẩu! ({username})")
 
 def require_login():
     """
@@ -129,10 +137,10 @@ def require_login():
         if "auth_retry_count" not in st.session_state:
             st.session_state["auth_retry_count"] = 0
             
-        if st.session_state["auth_retry_count"] < 3:
+        if st.session_state["auth_retry_count"] < 5: # Increase retries to 5
             st.session_state["auth_retry_count"] += 1
             # Wait varying time to allow frontend to sync
-            time.sleep(0.3)
+            time.sleep(0.5) # Increase wait time
             st.rerun()
             
         # 4. Exhausted retries -> Show Login Form

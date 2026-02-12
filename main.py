@@ -3,10 +3,11 @@ from datetime import date, datetime
 from src.ui import apply_sidebar_style, create_custom_sidebar_menu
 from src.db import get_all_rooms, get_all_bookings, get_bookings_for_today
 from src.models import RoomStatus, BookingStatus
+from src.config import AppConfig
 
 st.set_page_config(
-    page_title="QUẢN LÝ PHÒNG KHÁCH SẠN The Bamboo Resort",
-    page_icon="🎋",
+    page_title=AppConfig.Page_Title,
+    page_icon=AppConfig.Page_Icon,
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -19,7 +20,7 @@ require_login()
 apply_sidebar_style()
 create_custom_sidebar_menu()
 
-st.markdown("<h1 style='text-align: center; margin-bottom: 5px;'>🎋 QUẢN LÝ PHÒNG KHÁCH SẠN</h1>", unsafe_allow_html=True)
+st.markdown(f"<h1 style='text-align: center; margin-bottom: 5px;'>{AppConfig.Page_Icon} {AppConfig.Page_Title}</h1>", unsafe_allow_html=True)
 
 # --- 1. THỐNG KÊ NHANH ---
 rooms = get_all_rooms()

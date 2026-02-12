@@ -5,20 +5,21 @@ import os
 from datetime import datetime, timedelta
 from src.models import Booking, BookingStatus, RoomStatus
 import uuid
+from src.config import AppConfig
 
 
-# --- 1. KẾT NỐI FIRESTORE (Singleton) ---
 # --- 1. KẾT NỐI FIRESTORE (Singleton) ---
 
 def init_firebase():
     """Khởi tạo Firebase App nếu chưa có"""
     if not firebase_admin._apps:
         try:
-            # Ưu tiên 1: File key (Local dev)
-            if os.path.exists("firebase_key.json"):
-                cred = credentials.Certificate("firebase_key.json")
+            # Ưu tiên 1: File key (Local dev / Configured path)
+            key_path = AppConfig.get_firebase_key_path()
+            if os.path.exists(key_path):
+                cred = credentials.Certificate(key_path)
                 firebase_admin.initialize_app(cred)
-                print("✅ Firebase initialized from firebase_key.json")
+                print(f"✅ Firebase initialized from {key_path}")
             # Ưu tiên 2: Streamlit Secrets (Cloud deployment)
             elif "firebase" in st.secrets:
                 # Convert st.secrets to a standard dict to avoid issues
